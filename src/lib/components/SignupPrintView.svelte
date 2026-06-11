@@ -100,17 +100,27 @@
               <th style="width: 18%;">姓名</th>
               <th style="width: 22%;">联系方式</th>
               <th style="width: 35%;">回答</th>
-              <th style="width: 17%;">候补顺序</th>
+              <th style="width: 17%;">签到状态</th>
             </tr>
           </thead>
           <tbody>
             {#each grouped.waitlist as item, idx}
-              <tr>
+              <tr class:checked={item.checkedIn}>
                 <td>{idx + 1}</td>
                 <td class="name">{item.name}</td>
                 <td>{item.phone}</td>
                 <td class="answer">{item.answer || '-'}</td>
-                <td>第 {item.waitlistPosition} 位</td>
+                <td class="checkinStatus">
+                  <div class="waitlistPositionTag">候补 #{item.waitlistPosition}</div>
+                  {#if item.checkedIn}
+                    <span class="statusBadge checked">已到场</span>
+                    {#if item.checkedInAt}
+                      <span class="checkinTime">{item.checkedInAt}</span>
+                    {/if}
+                  {:else}
+                    <span class="statusBadge unchecked">未到场</span>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -128,17 +138,27 @@
               <th style="width: 18%;">姓名</th>
               <th style="width: 22%;">联系方式</th>
               <th style="width: 35%;">回答</th>
-              <th style="width: 17%;">报名时间</th>
+              <th style="width: 17%;">签到状态</th>
             </tr>
           </thead>
           <tbody>
             {#each grouped.pending as item, idx}
-              <tr>
+              <tr class:checked={item.checkedIn}>
                 <td>{idx + 1}</td>
                 <td class="name">{item.name}</td>
                 <td>{item.phone}</td>
                 <td class="answer">{item.answer || '-'}</td>
-                <td class="pendingTime">{item.createdAt}</td>
+                <td class="checkinStatus">
+                  <div class="pendingTime">报名：{item.createdAt}</div>
+                  {#if item.checkedIn}
+                    <span class="statusBadge checked">已到场</span>
+                    {#if item.checkedInAt}
+                      <span class="checkinTime">{item.checkedInAt}</span>
+                    {/if}
+                  {:else}
+                    <span class="statusBadge unchecked">未到场</span>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -315,6 +335,19 @@
   .pendingTime {
     font-size: 12px;
     color: #999;
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+
+  .waitlistPositionTag {
+    display: inline-block;
+    padding: 2px 8px;
+    margin-bottom: 6px;
+    background: #fff3e0;
+    color: #b36b00;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
   }
 
   .emptyPrint {
