@@ -20,6 +20,7 @@
   let eventForm = { book: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
+  let hydrated = false;
 
   onMount(() => {
     const storedEvents = localStorage.getItem('zfl-6-events');
@@ -29,10 +30,10 @@
     if (storedSignups) signups = JSON.parse(storedSignups);
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
     selectedId = events[0]?.id || '';
+    hydrated = true;
   });
 
-  $: localStorageAvailable = typeof localStorage !== 'undefined';
-  $: if (localStorageAvailable) {
+  $: if (hydrated) {
     localStorage.setItem('zfl-6-events', JSON.stringify(events));
     localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
     localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
