@@ -1,6 +1,17 @@
 <script>
   import { onMount } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer } from 'lucide-svelte';
+  import SignupPrintView from '$lib/components/SignupPrintView.svelte';
+  import {
+    getSignupsByEvent,
+    getPendingSignups,
+    getRejectedSignups,
+    getRegularSignups,
+    getWaitlistSignups,
+    getCheckedInCount,
+    getRegularCheckedInCount,
+    sortSignupsForCsv
+  } from '$lib/utils/signupUtils.js';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -57,6 +68,7 @@
   let importPreview = null;
   let importErrors = [];
   let importStats = null;
+  let showPrintView = false;
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -106,26 +118,19 @@
 
   $: standaloneEvents = events.filter((e) => !e.seriesId);
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
-  $: selectedSignups = signups.filter((item) => item.eventId === selectedEvent?.id);
-  $: selectedApprovedSignups = selectedSignups.filter((item) => item.reviewStatus === '已通过');
-  $: selectedPendingSignups = selectedSignups.filter((item) => item.reviewStatus === '待审核').sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  $: selectedRejectedSignups = selectedSignups.filter((item) => item.reviewStatus === '已拒绝').sort((a, b) => (b.reviewedAt || '').localeCompare(a.reviewedAt || ''));
-  $: selectedRegularSignups = selectedApprovedSignups.filter((item) => item.status === '正式');
-  $: selectedWaitlistSignups = selectedApprovedSignups.filter((item) => item.status === '候补').sort((a, b) => a.waitlistPosition - b.waitlistPosition);
+  $: selectedSignups = getSignupsByEvent(signups, selectedEvent?.id);
+  $: selectedPendingSignups = getPendingSignups(selectedSignups);
+  $: selectedRejectedSignups = getRejectedSignups(selectedSignups);
+  $: selectedRegularSignups = getRegularSignups(selectedSignups);
+  $: selectedWaitlistSignups = getWaitlistSignups(selectedSignups);
   $: mySignups = signups.filter((item) => mySignupIds.includes(item.id));
-  $: checkedInCount = signups.filter((item) => item.checkedIn).length;
-  $: selectedCheckedInCount = selectedRegularSignups.filter((item) => item.checkedIn).length;
+  $: checkedInCount = getCheckedInCount(signups);
+  $: selectedCheckedInCount = getRegularCheckedInCount(selectedSignups);
   $: pendingCount = selectedPendingSignups.length;
   $: rejectedCount = selectedRejectedSignups.length;
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedRegularSignups.length) : 0;
   $: waitlistCount = selectedWaitlistSignups.length;
-  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...selectedSignups.sort((a, b) => {
-    const statusOrder = { '待审核': 0, '已通过': 1, '已拒绝': 2 };
-    if (statusOrder[a.reviewStatus] !== statusOrder[b.reviewStatus]) return statusOrder[a.reviewStatus] - statusOrder[b.reviewStatus];
-    if (a.status !== b.status) return a.status === '正式' ? -1 : 1;
-    if (a.status === '候补') return a.waitlistPosition - b.waitlistPosition;
-    return a.createdAt.localeCompare(b.createdAt);
-  }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
+  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...sortSignupsForCsv(selectedSignups).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
 
   $: seriesWithEvents = series.map((s) => {
     const sEvents = events.filter((e) => e.seriesId === s.id).sort((a, b) => a.time.localeCompare(b.time));
@@ -1195,6 +1200,13 @@
               </form>
             </div>
 
+            {#if showPrintView && selectedEvent}
+              <SignupPrintView
+                event={selectedEvent}
+                signups={selectedSignups}
+                onBack={() => showPrintView = false}
+              />
+            {:else}
             <section class="panel">
               <div class="eventHead">
                 <h2>报名名单</h2>
@@ -1209,6 +1221,7 @@
                     签到 {selectedCheckedInCount}/{selectedRegularSignups.length}
                   </span>
                   {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
+                  {#if selectedEvent}<button class="ghost printListBtn" on:click={() => showPrintView = true}><Printer size={16} /> 打印名单</button>{/if}
                 </div>
               </div>
 
@@ -1325,6 +1338,7 @@
               {/if}
               <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
             </section>
+            {/if}
           </section>
         {:else if adminTab === '书目库'}
           <section class="bookLibrary">
@@ -1724,5 +1738,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .importConfirmActions { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px dashed #e3dacb; }
 .importConfirmActions button { flex: 1; }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } }
+.printListBtn { display: inline-flex; align-items: center; gap: 6px; }
+
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } }
 </style>
