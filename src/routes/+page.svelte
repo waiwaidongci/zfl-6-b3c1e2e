@@ -35,6 +35,8 @@
   let editingBookId = '';
   let editingEventId = '';
   let editingEventPrevLimit = 0;
+  let editingEventSeriesId = undefined;
+  let editingEventSeriesIndex = undefined;
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
   let hydrated = false;
@@ -248,10 +250,12 @@
       const newLimit = Number(eventForm.limit || 0);
       const eventId = editingEventId;
       const prevLimit = editingEventPrevLimit;
-      const updatedEvents = events.map((e) => e.id === eventId ? { ...eventForm, id: eventId, limit: newLimit } : e);
+      const updatedEvents = events.map((e) => e.id === eventId ? { ...eventForm, id: eventId, limit: newLimit, seriesId: editingEventSeriesId, seriesIndex: editingEventSeriesIndex } : e);
       events = updatedEvents;
       editingEventId = '';
       editingEventPrevLimit = 0;
+      editingEventSeriesId = undefined;
+      editingEventSeriesIndex = undefined;
       if (newLimit > prevLimit) {
         promoteFromWaitlist(eventId, updatedEvents);
       }
@@ -267,6 +271,8 @@
   function editEvent(event) {
     editingEventId = event.id;
     editingEventPrevLimit = Number(event.limit);
+    editingEventSeriesId = event.seriesId;
+    editingEventSeriesIndex = event.seriesIndex;
     selectedBookId = '';
     eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status };
   }
@@ -274,6 +280,8 @@
   function cancelEditEvent() {
     editingEventId = '';
     editingEventPrevLimit = 0;
+    editingEventSeriesId = undefined;
+    editingEventSeriesIndex = undefined;
     clearBookSelection();
     eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   }
