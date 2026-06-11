@@ -31,6 +31,9 @@
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
   let hydrated = false;
+  let viewMode = '列表';
+  let calYear = new Date().getFullYear();
+  let calMonth = new Date().getMonth();
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -71,6 +74,16 @@
     eventForm.author = '';
     eventForm.description = '';
   }
+
+  $: todayStr = iso();
+  $: calFirstDay = new Date(calYear, calMonth, 1).getDay();
+  $: calDaysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  $: eventsByDate = events.reduce((acc, event) => {
+    const date = event.time.slice(0, 10);
+    if (!acc[date]) acc[date] = [];
+    acc[date].push(event);
+    return acc;
+  }, {});
 
   function selectBookForEvent(bookId) {
     selectedBookId = bookId;
@@ -122,6 +135,24 @@
     editingBookId = '';
   }
 
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function dateKey(day) { return `${calYear}-${pad(calMonth + 1)}-${pad(day)}`; }
+  function prevMonth() {
+    if (calMonth === 0) { calMonth = 11; calYear--; }
+    else calMonth--;
+  }
+  function nextMonth() {
+    if (calMonth === 11) { calMonth = 0; calYear++; }
+    else calMonth++;
+  }
+  function selectDayEvent(day) {
+    const key = dateKey(day);
+    const dayEvents = eventsByDate[key];
+    if (dayEvents && dayEvents.length > 0) {
+      selectedId = dayEvents[0].id;
+    }
+  }
+
   function signup() {
     if (!selectedEvent || selectedEvent.status !== '开放报名' || seatsLeft <= 0 || !signupForm.name.trim()) return;
     const newSignup = { id: crypto.randomUUID(), eventId: selectedEvent.id, ...signupForm, checkedIn: false, checkedInAt: '', createdAt: new Date().toLocaleString() };
@@ -164,13 +195,55 @@
 
   <section class="layout">
     <aside class="panel">
-      <h2>活动列表</h2>
-      {#each events as event}
-        <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
-          <strong>{event.book}</strong>
-          <span>{event.host} · {event.time.replace('T', ' ')}</span>
-        </button>
-      {/each}
+      <div class="panelHeader">
+        <h2>活动列表</h2>
+        <div class="viewToggle">
+          <button class:active={viewMode === '列表'} on:click={() => viewMode = '列表'}>列表</button>
+          <button class:active={viewMode === '月历'} on:click={() => viewMode = '月历'}>月历</button>
+        </div>
+      </div>
+      {#if viewMode === '列表'}
+        {#each events as event}
+          <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
+            <strong>{event.book}</strong>
+            <span>{event.host} · {event.time.replace('T', ' ')}</span>
+          </button>
+        {/each}
+      {:else}
+        <div class="calendar">
+          <div class="calNav">
+            <button class="calArrow" on:click={prevMonth}>‹</button>
+            <strong>{calYear}年{calMonth + 1}月</strong>
+            <button class="calArrow" on:click={nextMonth}>›</button>
+          </div>
+          <div class="calGrid">
+            <span class="calWeekday">日</span>
+            <span class="calWeekday">一</span>
+            <span class="calWeekday">二</span>
+            <span class="calWeekday">三</span>
+            <span class="calWeekday">四</span>
+            <span class="calWeekday">五</span>
+            <span class="calWeekday">六</span>
+            {#each Array(calFirstDay) as _}
+              <span class="calEmpty"></span>
+            {/each}
+            {#each Array(calDaysInMonth) as _, i}
+              {@const day = i + 1}
+              {@const key = dateKey(day)}
+              {@const dayEvents = eventsByDate[key] || []}
+              {@const isToday = todayStr === key}
+              {@const isSelected = dayEvents.some(e => e.id === selectedId)}
+              <button class="calDay" class:calToday={isToday} class:calSelected={isSelected} class:calHasEvents={dayEvents.length > 0} on:click={() => selectDayEvent(day)} disabled={dayEvents.length === 0}>
+                <span class="calDayNum">{day}</span>
+                {#if dayEvents.length > 0}
+                  <span class="calBadge">{dayEvents.length}</span>
+                  <span class="calBookNames">{dayEvents.map(e => e.book).join('、')}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </aside>
 
     {#if mode === '用户端'}
@@ -428,5 +501,26 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .bookActions button { padding: 6px 12px; font-size: 13px; }
 .bookActions .danger { background: #fce4e4; color: #a33; }
 .empty { text-align: center; color: #999; padding: 40px 20px; }
+.panelHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.panelHeader h2 { margin: 0; }
+.viewToggle { display: flex; gap: 4px; }
+.viewToggle button { padding: 4px 10px; font-size: 13px; background: #eee8dc; color: #312d25; border-radius: 6px; }
+.viewToggle .active { background: #4b4435; color: #fff; }
+.calendar { margin-top: 0; }
+.calNav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.calNav strong { font-size: 15px; }
+.calArrow { padding: 4px 10px; background: #eee8dc; color: #312d25; }
+.calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.calWeekday { text-align: center; font-size: 12px; color: #999; padding: 6px 0; font-weight: 500; }
+.calEmpty { min-height: 44px; }
+.calDay { display: flex; flex-direction: column; align-items: center; padding: 4px 2px; min-height: 44px; background: #f8f5ee; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-size: 12px; color: #2a2822; }
+.calDay:disabled { cursor: default; opacity: .35; background: transparent; }
+.calDay:not(:disabled):hover { background: #efe7d8; }
+.calDayNum { font-weight: 600; font-size: 13px; line-height: 1; }
+.calToday .calDayNum { color: #7b6b4e; }
+.calToday { border-color: #c4b99a; }
+.calSelected { border-color: #4b4435; background: #e2d9c6; }
+.calBadge { display: inline-block; background: #7b6b4e; color: #fff; font-size: 10px; line-height: 1; border-radius: 8px; padding: 2px 5px; margin-top: 3px; }
+.calBookNames { font-size: 10px; color: #6b6459; text-align: center; line-height: 1.25; margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
 </style>
