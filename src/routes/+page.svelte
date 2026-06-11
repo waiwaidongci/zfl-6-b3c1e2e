@@ -28,6 +28,7 @@
   let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   let bookForm = { title: '', author: '', description: '', question: '' };
   let editingBookId = '';
+  let editingEventId = '';
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
   let hydrated = false;
@@ -43,7 +44,15 @@
     const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
     if (storedBooks) books = JSON.parse(storedBooks);
     if (storedEvents) events = JSON.parse(storedEvents);
-    if (storedSignups) signups = JSON.parse(storedSignups);
+    if (storedSignups) {
+      const parsed = JSON.parse(storedSignups);
+      signups = parsed.map((item) => {
+        if (!item.status) {
+          return { ...item, status: '正式', waitlistPosition: undefined };
+        }
+        return item;
+      });
+    }
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
     selectedId = events[0]?.id || '';
     hydrated = true;
@@ -57,11 +66,29 @@
   }
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
   $: selectedSignups = signups.filter((item) => item.eventId === selectedEvent?.id);
+  $: selectedRegularSignups = selectedSignups.filter((item) => item.status === '正式');
+  $: selectedWaitlistSignups = selectedSignups.filter((item) => item.status === '候补').sort((a, b) => a.waitlistPosition - b.waitlistPosition);
   $: mySignups = signups.filter((item) => mySignupIds.includes(item.id));
   $: checkedInCount = signups.filter((item) => item.checkedIn).length;
-  $: selectedCheckedInCount = selectedSignups.filter((item) => item.checkedIn).length;
-  $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedSignups.length) : 0;
-  $: csv = ['活动,姓名,手机,回答,报名时间,签到状态,签到时间', ...selectedSignups.map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}"`)].join('\n');
+  $: selectedCheckedInCount = selectedRegularSignups.filter((item) => item.checkedIn).length;
+  $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedRegularSignups.length) : 0;
+  $: waitlistCount = selectedWaitlistSignups.length;
+  $: csv = ['活动,姓名,手机,回答,报名类型,报名时间,签到状态,签到时间,候补顺序', ...selectedSignups.sort((a, b) => {
+    if (a.status !== b.status) return a.status === '正式' ? -1 : 1;
+    if (a.status === '候补') return a.waitlistPosition - b.waitlistPosition;
+    return 0;
+  }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
+
+  let lastEventLimits = {};
+  $: if (hydrated && events.length > 0) {
+    events.forEach((event) => {
+      const currentLimit = Number(event.limit);
+      if (lastEventLimits[event.id] !== undefined && currentLimit > lastEventLimits[event.id]) {
+        promoteFromWaitlist(event.id);
+      }
+      lastEventLimits[event.id] = currentLimit;
+    });
+  }
 
   $: if (selectedBookId) {
     const book = books.find((b) => b.id === selectedBookId);
@@ -100,9 +127,26 @@
 
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
-    const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
-    events = [event, ...events];
-    selectedId = event.id;
+    if (editingEventId) {
+      events = events.map((e) => e.id === editingEventId ? { ...eventForm, id: editingEventId, limit: Number(eventForm.limit || 0) } : e);
+      editingEventId = '';
+    } else {
+      const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
+      events = [event, ...events];
+      selectedId = event.id;
+    }
+    clearBookSelection();
+    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  }
+
+  function editEvent(event) {
+    editingEventId = event.id;
+    selectedBookId = '';
+    eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status };
+  }
+
+  function cancelEditEvent() {
+    editingEventId = '';
     clearBookSelection();
     eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   }
@@ -160,16 +204,85 @@
     }
   }
 
+  function promoteFromWaitlist(eventId) {
+    const event = events.find((e) => e.id === eventId);
+    if (!event) return;
+
+    const eventSignups = signups.filter((item) => item.eventId === eventId);
+    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
+    const limit = Number(event.limit);
+
+    if (regularCount < limit) {
+      const waitlist = eventSignups
+        .filter((item) => item.status === '候补')
+        .sort((a, b) => a.waitlistPosition - b.waitlistPosition);
+
+      const spotsToFill = limit - regularCount;
+      const toPromote = waitlist.slice(0, spotsToFill);
+
+      if (toPromote.length > 0) {
+        signups = signups.map((item) => {
+          const promotee = toPromote.find((p) => p.id === item.id);
+          if (promotee) {
+            return { ...item, status: '正式', waitlistPosition: undefined };
+          }
+          if (item.eventId === eventId && item.status === '候补') {
+            const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
+            if (newPosition > 0) {
+              return { ...item, waitlistPosition: newPosition };
+            }
+          }
+          return item;
+        });
+      }
+    }
+  }
+
   function signup() {
-    if (!selectedEvent || selectedEvent.status !== '开放报名' || seatsLeft <= 0 || !signupForm.name.trim()) return;
-    const newSignup = { id: crypto.randomUUID(), eventId: selectedEvent.id, ...signupForm, checkedIn: false, checkedInAt: '', createdAt: new Date().toLocaleString() };
+    if (!selectedEvent || selectedEvent.status !== '开放报名' || !signupForm.name.trim()) return;
+
+    const eventSignups = signups.filter((item) => item.eventId === selectedEvent.id);
+    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
+    const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
+
+    let status = '正式';
+    let waitlistPosition = undefined;
+
+    if (regularCount >= Number(selectedEvent.limit)) {
+      status = '候补';
+      waitlistPosition = waitlistCount + 1;
+    }
+
+    const newSignup = {
+      id: crypto.randomUUID(),
+      eventId: selectedEvent.id,
+      ...signupForm,
+      status,
+      waitlistPosition,
+      checkedIn: false,
+      checkedInAt: '',
+      createdAt: new Date().toLocaleString()
+    };
     signups = [newSignup, ...signups];
     mySignupIds = [...mySignupIds, newSignup.id];
     signupForm = { name: '', phone: '', answer: '' };
   }
 
   function cancelSignup(id) {
+    const signup = signups.find((item) => item.id === id);
     signups = signups.filter((item) => item.id !== id);
+    mySignupIds = mySignupIds.filter((mid) => mid !== id);
+    if (signup && signup.status === '正式') {
+      promoteFromWaitlist(signup.eventId);
+    } else if (signup && signup.status === '候补') {
+      const eventSignups = signups.filter((item) => item.eventId === signup.eventId && item.status === '候补');
+      signups = signups.map((item) => {
+        if (item.eventId === signup.eventId && item.status === '候补' && item.waitlistPosition > signup.waitlistPosition) {
+          return { ...item, waitlistPosition: item.waitlistPosition - 1 };
+        }
+        return item;
+      });
+    }
   }
 
   function toggleEventStatus(id) {
@@ -177,6 +290,8 @@
   }
 
   function toggleCheckIn(id) {
+    const signup = signups.find((item) => item.id === id);
+    if (signup && signup.status !== '正式') return;
     signups = signups.map((item) => item.id === id ? { ...item, checkedIn: !item.checkedIn, checkedInAt: !item.checkedIn ? new Date().toLocaleString() : '' } : item);
   }
 </script>
@@ -211,10 +326,15 @@
       </div>
       {#if viewMode === '列表'}
         {#each events as event}
-          <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
-            <strong>{event.book}</strong>
-            <span>{event.host} · {event.time.replace('T', ' ')}</span>
-          </button>
+          <div class="eventItem">
+            <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
+              <strong>{event.book}</strong>
+              <span>{event.host} · {event.time.replace('T', ' ')}</span>
+            </button>
+            {#if mode === '管理端'}
+              <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
+            {/if}
+          </div>
         {/each}
       {:else}
         <div class="calendar">
@@ -281,7 +401,12 @@
               {/if}
               <p>{selectedEvent.host} · {selectedEvent.time.replace('T', ' ')} · {selectedEvent.status}</p>
             </div>
-            <strong>{seatsLeft}个余位</strong>
+            <div class="seatsInfo">
+              <strong>{seatsLeft}个余位</strong>
+              {#if waitlistCount > 0}
+                <span class="waitlistCount">{waitlistCount}人候补</span>
+              {/if}
+            </div>
           </div>
           {#if selectedEvent.description}
             <div class="bookDescription">
@@ -293,26 +418,34 @@
             <input bind:value={signupForm.name} placeholder="姓名" />
             <input bind:value={signupForm.phone} placeholder="联系方式" />
             <textarea bind:value={signupForm.answer} placeholder={selectedEvent.question || '报名备注'}></textarea>
-            <button disabled={selectedEvent.status !== '开放报名' || seatsLeft <= 0}>提交报名</button>
+            {#if seatsLeft <= 0 && selectedEvent.status === '开放报名'}
+              <p class="waitlistNotice">⚠️ 活动已报满，提交后将加入候补名单</p>
+            {/if}
+            <button disabled={selectedEvent.status !== '开放报名'}>{seatsLeft <= 0 ? '加入候补' : '提交报名'}</button>
           </form>
           {#if mySignups.length > 0}
             <div class="mySignups">
               <h3>我的报名</h3>
               {#each mySignups as item}
                 {@const event = events.find((e) => e.id === item.eventId)}
-                <article class="mySignup-card">
+                <article class="mySignup-card" class:waitlist-card={item.status === '候补'}>
                   <strong>{event?.book || '未知活动'}</strong>
                   <span>{event?.host} · {event?.time?.replace('T', ' ')}</span>
                   <span>报名时间：{item.createdAt}</span>
                   <div class="mySignup-status">
-                    <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
-                      {item.checkedIn ? '已到场' : '未到场'}
+                    <span class="status-badge" class:regular={item.status === '正式'} class:waitlist={item.status === '候补'}>
+                      {item.status === '正式' ? '正式报名' : `候补 #${item.waitlistPosition}`}
                     </span>
+                    {#if item.status === '正式'}
+                      <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
+                        {item.checkedIn ? '已到场' : '未到场'}
+                      </span>
+                    {/if}
                     {#if item.checkedIn && item.checkedInAt}
                       <span class="checkin-time">签到时间：{item.checkedInAt}</span>
                     {/if}
                   </div>
-                  <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                  <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>{item.status === '正式' ? '取消报名' : '退出候补'}</button>
                 </article>
               {/each}
             </div>
@@ -330,7 +463,7 @@
           <section class="adminGrid">
             <div class="panel">
               <form on:submit|preventDefault={createEvent}>
-                <h2><CalendarPlus size={18} />创建活动</h2>
+                <h2><CalendarPlus size={18} />{editingEventId ? '编辑活动' : '创建活动'}</h2>
 
                 <div class="bookSelector">
                   <label for="bookSelector">从书目库选择</label>
@@ -360,7 +493,12 @@
                   <option>开放报名</option>
                   <option>已关闭</option>
                 </select>
-                <button>保存活动</button>
+                <div class="formActions">
+                  <button>{editingEventId ? '保存修改' : '保存活动'}</button>
+                  {#if editingEventId}
+                    <button type="button" class="ghost" on:click={cancelEditEvent}>取消</button>
+                  {/if}
+                </div>
               </form>
             </div>
 
@@ -368,35 +506,67 @@
               <div class="eventHead">
                 <h2>报名名单</h2>
                 <div class="eventHead-actions">
-                  <span class="checkin-summary">{selectedCheckedInCount}/{selectedSignups.length} 已签到</span>
+                  <span class="checkin-summary">正式 {selectedRegularSignups.length}/{selectedEvent?.limit || 0} · 候补 {waitlistCount} · 签到 {selectedCheckedInCount}/{selectedRegularSignups.length}</span>
                   {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
                 </div>
               </div>
-              <div class="signupList">
-                {#each selectedSignups as item}
-                  <article>
-                    <div class="signupRow">
-                      <div>
-                        <strong>{item.name}</strong>
-                        <span>{item.phone} · {item.createdAt}</span>
-                        <p>{item.answer}</p>
-                        {#if item.checkedIn && item.checkedInAt}
-                          <span class="checkin-time">签到时间：{item.checkedInAt}</span>
-                        {/if}
+
+              {#if selectedRegularSignups.length > 0}
+                <h3 class="signupSectionTitle">正式报名 ({selectedRegularSignups.length})</h3>
+                <div class="signupList">
+                  {#each selectedRegularSignups as item}
+                    <article class="regular-card">
+                      <div class="signupRow">
+                        <div>
+                          <strong>{item.name}</strong>
+                          <span>{item.phone} · {item.createdAt}</span>
+                          <p>{item.answer}</p>
+                          {#if item.checkedIn && item.checkedInAt}
+                            <span class="checkin-time">签到时间：{item.checkedInAt}</span>
+                          {/if}
+                        </div>
+                        <div class="badgeGroup">
+                          <span class="status-badge regular">正式</span>
+                          <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
+                            {item.checkedIn ? '已到场' : '未到场'}
+                          </span>
+                        </div>
                       </div>
-                      <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
-                        {item.checkedIn ? '已到场' : '未到场'}
-                      </span>
-                    </div>
-                    <div class="signupActions">
-                      <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
-                        {item.checkedIn ? '标记未到场' : '标记已到场'}
-                      </button>
-                      <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
-                    </div>
-                  </article>
-                {/each}
-              </div>
+                      <div class="signupActions">
+                        <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
+                          {item.checkedIn ? '标记未到场' : '标记已到场'}
+                        </button>
+                        <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if selectedWaitlistSignups.length > 0}
+                <h3 class="signupSectionTitle waitlistSectionTitle">候补名单 ({waitlistCount})</h3>
+                <div class="signupList">
+                  {#each selectedWaitlistSignups as item}
+                    <article class="waitlist-card">
+                      <div class="signupRow">
+                        <div>
+                          <strong>{item.name}</strong>
+                          <span>{item.phone} · {item.createdAt}</span>
+                          <p>{item.answer}</p>
+                        </div>
+                        <span class="status-badge waitlist">候补 #{item.waitlistPosition}</span>
+                      </div>
+                      <div class="signupActions">
+                        <button class="ghost" on:click={() => cancelSignup(item.id)}>退出候补</button>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if selectedSignups.length === 0}
+                <p class="empty">暂无报名</p>
+              {/if}
               <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
             </section>
           </section>
@@ -466,10 +636,12 @@ h2 { margin: 0 0 16px; display: flex; align-items: center; gap: 8px; font-size: 
 .metrics strong { font-size: 26px; }
 .metrics span { grid-column: 2; color: #686258; }
 .layout { display: grid; grid-template-columns: 310px 1fr; gap: 16px; align-items: start; }
-.eventButton { width: 100%; display: block; text-align: left; margin-bottom: 8px; background: #f8f5ee; color: #29261f; border: 1px solid #e1d8ca; }
+.eventItem { display: flex; gap: 6px; align-items: start; margin-bottom: 8px; }
+.eventButton { flex: 1; display: block; text-align: left; background: #f8f5ee; color: #29261f; border: 1px solid #e1d8ca; margin-bottom: 0; }
 .eventButton strong, .eventButton span, article strong, article span { display: block; }
 .eventButton span, article span, p { color: #6b6459; }
 .event-active { border-color: #7b6b4e; background: #efe7d8; }
+.editEventBtn { padding: 6px 10px; font-size: 12px; flex-shrink: 0; }
 form { display: flex; flex-direction: column; gap: 10px; }
 input, select, textarea { width: 100%; border: 1px solid #d7ccba; border-radius: 8px; padding: 11px 12px; background: #fff; color: #2a2822; }
 textarea { min-height: 96px; resize: vertical; }
@@ -479,6 +651,18 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .eventHead { display: flex; justify-content: space-between; gap: 16px; align-items: start; margin-bottom: 16px; }
 .eventHead h2, .eventHead p { margin: 0; }
 .eventHead strong { white-space: nowrap; font-size: 24px; }
+.seatsInfo { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.waitlistCount { font-size: 13px; color: #b36b00; background: #fff3e0; padding: 2px 8px; border-radius: 10px; }
+.waitlistNotice { margin: 0; padding: 10px 12px; background: #fff3e0; border: 1px solid #ffcc80; border-radius: 8px; color: #b36b00; font-size: 14px; }
+.status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.status-badge.regular { background: #e6f4ea; color: #1e7e34; }
+.status-badge.waitlist { background: #fff3e0; color: #b36b00; }
+.badgeGroup { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.signupSectionTitle { margin: 16px 0 8px; font-size: 15px; color: #4b4435; }
+.waitlistSectionTitle { color: #b36b00; }
+.regular-card { background: #fffaf2; }
+.waitlist-card { background: #fff8ee; border: 1px dashed #ffcc80 !important; }
+.mySignup-card.waitlist-card { background: #fff8ee; border: 1px dashed #ffcc80 !important; }
 .adminGrid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
 .signupList { display: grid; gap: 10px; }
 .signupList article { border: 1px solid #e3dacb; border-radius: 8px; padding: 14px; background: #fffaf2; }
