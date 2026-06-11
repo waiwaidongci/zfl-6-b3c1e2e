@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight } from 'lucide-svelte';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -18,12 +18,17 @@
     { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名' }
   ];
 
+  const seedSeries = [];
+
   let books = seedBooks;
   let events = seedEvents;
+  let series = seedSeries;
   let signups = [];
   let selectedId = seedEvents[0].id;
   let mode = '用户端';
   let adminTab = '活动管理';
+  let listViewTab = '全部活动';
+  let selectedSeriesId = '';
   let selectedBookId = '';
   let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   let bookForm = { title: '', author: '', description: '', question: '' };
@@ -38,11 +43,18 @@
   let calMonth = new Date().getMonth();
   let activeDate = '';
 
+  let seriesForm = { title: '', description: '' };
+  let editingSeriesId = '';
+  let addingEventToSeriesId = '';
+  let seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let selectedSeriesBookId = '';
+
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
     const storedEvents = localStorage.getItem('zfl-6-events');
     const storedSignups = localStorage.getItem('zfl-6-signups');
     const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
+    const storedSeries = localStorage.getItem('zfl-6-series');
     if (storedBooks) books = JSON.parse(storedBooks);
     if (storedEvents) events = JSON.parse(storedEvents);
     if (storedSignups) {
@@ -55,6 +67,7 @@
       });
     }
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
+    if (storedSeries) series = JSON.parse(storedSeries);
     selectedId = events[0]?.id || '';
     hydrated = true;
   });
@@ -64,7 +77,10 @@
     localStorage.setItem('zfl-6-events', JSON.stringify(events));
     localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
     localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
+    localStorage.setItem('zfl-6-series', JSON.stringify(series));
   }
+
+  $: standaloneEvents = events.filter((e) => !e.seriesId);
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
   $: selectedSignups = signups.filter((item) => item.eventId === selectedEvent?.id);
   $: selectedRegularSignups = selectedSignups.filter((item) => item.status === '正式');
@@ -79,6 +95,11 @@
     if (a.status === '候补') return a.waitlistPosition - b.waitlistPosition;
     return 0;
   }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
+
+  $: seriesWithEvents = series.map((s) => {
+    const sEvents = events.filter((e) => e.seriesId === s.id).sort((a, b) => a.time.localeCompare(b.time));
+    return { ...s, events: sEvents };
+  });
 
   let lastEventLimits = {};
   $: eventLimits = events.map((e) => `${e.id}:${e.limit}`).join('|');
@@ -105,6 +126,16 @@
     eventForm.description = '';
   }
 
+  $: if (selectedSeriesBookId) {
+    const book = books.find((b) => b.id === selectedSeriesBookId);
+    if (book) {
+      seriesEventForm.book = book.title;
+      seriesEventForm.author = book.author;
+      seriesEventForm.description = book.description;
+      seriesEventForm.question = book.question;
+    }
+  }
+
   $: todayStr = iso();
   $: calFirstDay = new Date(calYear, calMonth, 1).getDay();
   $: calDaysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
@@ -114,6 +145,90 @@
     acc[date].push(event);
     return acc;
   }, {});
+
+  function getSeriesOfEvent(eventId) {
+    const event = events.find((e) => e.id === eventId);
+    if (!event || !event.seriesId) return null;
+    return series.find((s) => s.id === event.seriesId) || null;
+  }
+
+  function getSeriesEvents(seriesId) {
+    return events.filter((e) => e.seriesId === seriesId).sort((a, b) => a.time.localeCompare(b.time));
+  }
+
+  function getEventIndexInSeries(eventId) {
+    const event = events.find((e) => e.id === eventId);
+    if (!event || !event.seriesId) return 0;
+    const sEvents = getSeriesEvents(event.seriesId);
+    return sEvents.findIndex((e) => e.id === eventId) + 1;
+  }
+
+  function createSeries() {
+    if (!seriesForm.title.trim()) return;
+    if (editingSeriesId) {
+      series = series.map((s) => s.id === editingSeriesId ? { ...s, ...seriesForm } : s);
+      editingSeriesId = '';
+    } else {
+      const s = { id: crypto.randomUUID(), ...seriesForm, createdAt: new Date().toLocaleString() };
+      series = [s, ...series];
+    }
+    seriesForm = { title: '', description: '' };
+  }
+
+  function editSeries(s) {
+    editingSeriesId = s.id;
+    seriesForm = { title: s.title, description: s.description || '' };
+  }
+
+  function deleteSeries(seriesId) {
+    if (!confirm('确定要删除此系列吗？系列下的活动将变为单场活动。')) return;
+    events = events.map((e) => e.seriesId === seriesId ? { ...e, seriesId: undefined, seriesIndex: undefined } : e);
+    series = series.filter((s) => s.id !== seriesId);
+    if (selectedSeriesId === seriesId) selectedSeriesId = '';
+  }
+
+  function cancelEditSeries() {
+    editingSeriesId = '';
+    seriesForm = { title: '', description: '' };
+  }
+
+  function startAddEventToSeries(seriesId) {
+    addingEventToSeriesId = seriesId;
+    selectedSeriesBookId = '';
+    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  }
+
+  function cancelAddEventToSeries() {
+    addingEventToSeriesId = '';
+    selectedSeriesBookId = '';
+    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  }
+
+  function addEventToSeries() {
+    if (!seriesEventForm.book.trim() || !seriesEventForm.host.trim() || !addingEventToSeriesId) return;
+    const sEvents = getSeriesEvents(addingEventToSeriesId);
+    const event = {
+      id: crypto.randomUUID(),
+      ...seriesEventForm,
+      limit: Number(seriesEventForm.limit || 0),
+      seriesId: addingEventToSeriesId,
+      seriesIndex: sEvents.length + 1
+    };
+    events = [event, ...events];
+    cancelAddEventToSeries();
+  }
+
+  function selectSeriesBookForEvent(bookId) {
+    selectedSeriesBookId = bookId;
+  }
+
+  function clearSeriesBookSelection() {
+    selectedSeriesBookId = '';
+    seriesEventForm.book = '';
+    seriesEventForm.author = '';
+    seriesEventForm.description = '';
+    seriesEventForm.question = '';
+  }
 
   function selectBookForEvent(bookId) {
     selectedBookId = bookId;
@@ -322,6 +437,7 @@
 
   <section class="metrics">
     <article><LibraryBig size={22} /><strong>{events.length}</strong><span>活动</span></article>
+    <article><Layers size={22} /><strong>{series.length}</strong><span>系列</span></article>
     <article><Users size={22} /><strong>{signups.length}</strong><span>报名</span></article>
     <article><ListChecks size={22} /><strong>{events.filter((event) => event.status === '开放报名').length}</strong><span>开放中</span></article>
     <article><UserCheck size={22} /><strong>{checkedInCount}</strong><span>已签到</span></article>
@@ -337,17 +453,66 @@
         </div>
       </div>
       {#if viewMode === '列表'}
-        {#each events as event}
-          <div class="eventItem">
-            <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
-              <strong>{event.book}</strong>
-              <span>{event.host} · {event.time.replace('T', ' ')}</span>
-            </button>
-            {#if mode === '管理端'}
-              <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
-            {/if}
-          </div>
-        {/each}
+        <div class="listViewTabs">
+          <button class:active={listViewTab === '全部活动'} on:click={() => { listViewTab = '全部活动'; selectedSeriesId = ''; }}>全部活动</button>
+          <button class:active={listViewTab === '按系列'} on:click={() => listViewTab = '按系列'}>按系列</button>
+          <button class:active={listViewTab === '单场活动'} on:click={() => { listViewTab = '单场活动'; selectedSeriesId = ''; }}>单场</button>
+        </div>
+        {#if listViewTab === '全部活动' || listViewTab === '单场活动'}
+          {#each (listViewTab === '单场活动' ? standaloneEvents : events) as event}
+            <div class="eventItem">
+              <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
+                <strong>{event.book}</strong>
+                {#if event.seriesId}
+                  {@const s = getSeriesOfEvent(event.id)}
+                  {#if s}
+                    <span class="seriesTag">📚 {s.title} · 第{getEventIndexInSeries(event.id)}期</span>
+                  {/if}
+                {/if}
+                <span>{event.host} · {event.time.replace('T', ' ')}</span>
+              </button>
+              {#if mode === '管理端'}
+                <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
+              {/if}
+            </div>
+          {/each}
+        {:else if listViewTab === '按系列'}
+          {#if series.length === 0}
+            <p class="empty empty-small">暂无系列活动</p>
+          {/if}
+          {#each seriesWithEvents as s}
+            <div class="seriesGroup">
+              <button class="seriesHeader" class:series-expanded={selectedSeriesId === s.id} on:click={() => selectedSeriesId = selectedSeriesId === s.id ? '' : s.id}>
+                <Layers size={14} />
+                <strong>{s.title}</strong>
+                <span class="seriesCount">{s.events.length}期</span>
+                <span style:transform={selectedSeriesId === s.id ? 'rotate(90deg)' : 'rotate(0deg)'} style:transition="transform .2s" style:color="#8a7f6a" style:display="inline-flex" style:align-items="center"><ChevronRight size={14} /></span>
+              </button>
+              {#if selectedSeriesId === s.id}
+                <div class="seriesEvents">
+                  {#if s.description}
+                    <p class="seriesDesc">{s.description}</p>
+                  {/if}
+                  {#if s.events.length === 0}
+                    <p class="empty empty-small">暂无场次，管理端可添加</p>
+                  {/if}
+                  {#each s.events as event, idx}
+                    <div class="eventItem eventItem-series">
+                      <button class:event-active={selectedEvent?.id === event.id} class="eventButton" on:click={() => selectedId = event.id}>
+                        <span class="episodeBadge">第{idx + 1}期</span>
+                        <strong>{event.book}</strong>
+                        <span>{event.host} · {event.time.replace('T', ' ')}</span>
+                      </button>
+                      {#if mode === '管理端'}
+                        <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        {/if}
       {:else}
         <div class="calendar">
           <div class="calNav">
@@ -405,6 +570,21 @@
     {#if mode === '用户端'}
       <section class="panel">
         {#if selectedEvent}
+          {@const eventSeries = getSeriesOfEvent(selectedEvent.id)}
+          {@const seriesEvents = eventSeries ? getSeriesEvents(eventSeries.id) : []}
+          {#if eventSeries}
+            <div class="seriesBanner">
+              <div class="seriesBannerInfo">
+                <Layers size={16} />
+                <span class="seriesBannerLabel">系列活动</span>
+                <strong>{eventSeries.title}</strong>
+                {#if seriesEvents.length > 0}
+                  <span class="seriesBannerCount">共 {seriesEvents.length} 期</span>
+                {/if}
+              </div>
+              <span class="seriesBannerEpisode">第 {getEventIndexInSeries(selectedEvent.id)} 期</span>
+            </div>
+          {/if}
           <div class="eventHead">
             <div>
               <h2>{selectedEvent.book}</h2>
@@ -426,6 +606,12 @@
               <p>{selectedEvent.description}</p>
             </div>
           {/if}
+          {#if eventSeries && eventSeries.description}
+            <div class="bookDescription seriesDescription">
+              <h3>系列主题</h3>
+              <p>{eventSeries.description}</p>
+            </div>
+          {/if}
           <form on:submit|preventDefault={signup}>
             <input bind:value={signupForm.name} placeholder="姓名" />
             <input bind:value={signupForm.phone} placeholder="联系方式" />
@@ -435,6 +621,23 @@
             {/if}
             <button disabled={selectedEvent.status !== '开放报名'}>{seatsLeft <= 0 ? '加入候补' : '提交报名'}</button>
           </form>
+          {#if eventSeries && seriesEvents.length > 1}
+            <div class="seriesEventsPanel">
+              <h3>📚 本系列全部场次</h3>
+              <div class="seriesEventsList">
+                {#each seriesEvents as ev, idx}
+                  <button class="seriesEventItem" class:seriesEventItem-active={ev.id === selectedEvent.id} on:click={() => selectedId = ev.id}>
+                    <span class="episodeBadge small">第{idx + 1}期</span>
+                    <div class="seriesEventInfo">
+                      <strong>{ev.book}</strong>
+                      <span>{ev.host} · {ev.time.replace('T', ' ')}</span>
+                    </div>
+                    <span class="status-badge {ev.status === '开放报名' ? 'regular' : 'waitlist'}">{ev.status}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
           {#if mySignups.length > 0}
             <div class="mySignups">
               <h3>我的报名</h3>
@@ -468,10 +671,104 @@
       <div class="adminLayout">
         <div class="adminTabs">
           <button class:active={adminTab === '活动管理'} on:click={() => adminTab = '活动管理'}>活动管理</button>
+          <button class:active={adminTab === '系列活动'} on:click={() => adminTab = '系列活动'}>系列活动</button>
           <button class:active={adminTab === '书目库'} on:click={() => adminTab = '书目库'}>书目库</button>
         </div>
 
-        {#if adminTab === '活动管理'}
+        {#if adminTab === '系列活动'}
+          <section class="bookLibrary">
+            <form class="panel bookForm" on:submit|preventDefault={createSeries}>
+              <h2><Layers size={18} />{editingSeriesId ? '编辑系列' : '创建系列'}</h2>
+              <input bind:value={seriesForm.title} placeholder="系列总主题（如：女性文学三部曲）" />
+              <textarea bind:value={seriesForm.description} placeholder="系列简介/主题说明"></textarea>
+              <div class="formActions">
+                <button>{editingSeriesId ? '保存修改' : '创建系列'}</button>
+                {#if editingSeriesId}
+                  <button type="button" class="ghost" on:click={cancelEditSeries}>取消</button>
+                {/if}
+              </div>
+            </form>
+
+            <section class="panel bookList">
+              <h2><Layers size={18} />系列列表 ({series.length})</h2>
+              {#if series.length === 0}
+                <p class="empty">暂无系列，创建第一个读书会系列吧</p>
+              {:else}
+                {#each seriesWithEvents as s}
+                  <article class="bookCard seriesCard">
+                    <div class="bookInfo">
+                      <strong>{s.title}</strong>
+                      {#if s.description}
+                        <p class="desc">{s.description}</p>
+                      {/if}
+                      <span class="question">共 {s.events.length} 期</span>
+
+                      {#if s.events.length > 0}
+                        <div class="seriesEpisodes">
+                          {#each s.events as ev, idx}
+                            <div class="episodeRow">
+                              <span class="episodeBadge small">第{idx + 1}期</span>
+                              <span class="episodeTitle">{ev.book}</span>
+                              <span class="episodeMeta">{ev.host} · {ev.time.replace('T', ' ')}</span>
+                              <button class="ghost episodeEditBtn" on:click={(e) => { e.stopPropagation(); editEvent(ev); adminTab = '活动管理'; }}>编辑</button>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+
+                      {#if addingEventToSeriesId === s.id}
+                        <div class="addEpisodeForm">
+                          <h4>添加新场次</h4>
+                          <div class="bookSelector">
+                            <label for="seriesBookSelector">从书目库选择</label>
+                            <div class="bookSelectorRow">
+                              <select id="seriesBookSelector" bind:value={selectedSeriesBookId} on:change={(e) => selectSeriesBookForEvent(e.target.value)}>
+                                <option value="">手动输入书名</option>
+                                {#each books as book}
+                                  <option value={book.id}>{book.title} · {book.author}</option>
+                                {/each}
+                              </select>
+                              {#if selectedSeriesBookId}
+                                <button type="button" class="ghost clearBtn" on:click={clearSeriesBookSelection} title="清除选择">
+                                  <X size={16} />
+                                </button>
+                              {/if}
+                            </div>
+                          </div>
+                          <input bind:value={seriesEventForm.book} placeholder="书名" />
+                          <input bind:value={seriesEventForm.author} placeholder="作者" />
+                          <textarea bind:value={seriesEventForm.description} placeholder="书目简介"></textarea>
+                          <input bind:value={seriesEventForm.host} placeholder="主讲人" />
+                          <input bind:value={seriesEventForm.time} type="datetime-local" />
+                          <input bind:value={seriesEventForm.limit} type="number" min="1" placeholder="人数上限" />
+                          <input bind:value={seriesEventForm.question} placeholder="报名问题" />
+                          <select bind:value={seriesEventForm.status}>
+                            <option>开放报名</option>
+                            <option>已关闭</option>
+                          </select>
+                          <div class="formActions">
+                            <button type="button" on:click={addEventToSeries}>添加到此系列</button>
+                            <button type="button" class="ghost" on:click={cancelAddEventToSeries}>取消</button>
+                          </div>
+                        </div>
+                      {:else}
+                        <button class="ghost addEpisodeBtn" on:click={() => startAddEventToSeries(s.id)}>
+                          <Plus size={14} /> 添加场次
+                        </button>
+                      {/if}
+                    </div>
+                    <div class="bookActions">
+                      <button class="ghost" on:click={() => editSeries(s)}>编辑</button>
+                      <button class="ghost danger" on:click={() => deleteSeries(s.id)}>
+                        <Trash2 size={14} /> 删除
+                      </button>
+                    </div>
+                  </article>
+                {/each}
+              {/if}
+            </section>
+          </section>
+        {:else if adminTab === '活动管理'}
           <section class="adminGrid">
             <div class="panel">
               <form on:submit|preventDefault={createEvent}>
@@ -754,5 +1051,49 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .calEventItem strong { font-size: 14px; }
 .calEventItem span { font-size: 12px; color: #6b6459; margin-top: 2px; }
 .calEventItem.event-active { border-color: #7b6b4e; background: #efe7d8; }
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
+.listViewTabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+.listViewTabs button { padding: 5px 10px; font-size: 12px; background: #eee8dc; color: #312d25; border-radius: 6px; }
+.listViewTabs .active { background: #4b4435; color: #fff; }
+.seriesTag { display: inline-block; font-size: 11px; color: #7b6b4e; background: #efe7d8; padding: 2px 6px; border-radius: 8px; margin: 2px 0; }
+.seriesGroup { margin-bottom: 10px; border: 1px solid #e1d8ca; border-radius: 8px; overflow: hidden; }
+.seriesHeader { width: 100%; display: flex; align-items: center; gap: 6px; padding: 10px 12px; background: #f8f5ee; border: 0; cursor: pointer; text-align: left; font-size: 14px; }
+.seriesHeader strong { flex: 1; }
+.seriesHeader.series-expanded { background: #efe7d8; }
+.seriesCount { font-size: 12px; color: #7b6b4e; background: #fff; padding: 2px 8px; border-radius: 10px; }
+.seriesEvents { padding: 8px 10px 10px; background: #fffaf2; }
+.seriesDesc { margin: 0 0 10px; padding: 8px 10px; background: #fff; border-radius: 6px; font-size: 13px; color: #4a4439; }
+.eventItem-series { margin-bottom: 6px; }
+.eventItem-series:last-child { margin-bottom: 0; }
+.episodeBadge { display: inline-block; font-size: 11px; color: #fff; background: #7b6b4e; padding: 2px 8px; border-radius: 8px; margin-bottom: 4px; }
+.episodeBadge.small { font-size: 10px; padding: 1px 6px; }
+.empty-small { padding: 20px 10px; font-size: 13px; }
+.metrics { grid-template-columns: repeat(5, 1fr); }
+.seriesBanner { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: linear-gradient(135deg, #efe7d8, #fff8ee); border: 1px solid #d7cbb3; border-radius: 8px; margin-bottom: 14px; }
+.seriesBannerInfo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seriesBannerLabel { font-size: 12px; color: #7b6b4e; background: #fff; padding: 2px 8px; border-radius: 10px; }
+.seriesBannerInfo strong { font-size: 15px; color: #4b4435; }
+.seriesBannerCount { font-size: 12px; color: #686258; }
+.seriesBannerEpisode { font-weight: 600; color: #7b6b4e; background: #fff; padding: 4px 10px; border-radius: 12px; font-size: 13px; }
+.seriesDescription { background: #f0ebe0; border-color: #d7cbb3; }
+.seriesEventsPanel { margin-top: 18px; padding-top: 14px; border-top: 1px solid #e8ddc8; }
+.seriesEventsPanel h3 { margin: 0 0 10px; font-size: 15px; color: #4b4435; }
+.seriesEventsList { display: flex; flex-direction: column; gap: 6px; }
+.seriesEventItem { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fffaf2; border: 1px solid #e3dacb; border-radius: 8px; text-align: left; cursor: pointer; }
+.seriesEventItem-active { border-color: #7b6b4e; background: #efe7d8; }
+.seriesEventInfo { flex: 1; }
+.seriesEventInfo strong { display: block; font-size: 14px; }
+.seriesEventInfo span { display: block; font-size: 12px; color: #6b6459; margin-top: 2px; }
+.seriesCard { flex-direction: column; }
+.seriesCard .bookInfo { width: 100%; }
+.seriesCard .bookActions { flex-direction: row; width: 100%; justify-content: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e3dacb; }
+.seriesEpisodes { margin: 10px 0; padding: 10px; background: #fff8ee; border-radius: 8px; }
+.episodeRow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f0e6d2; flex-wrap: wrap; }
+.episodeRow:last-child { border-bottom: 0; }
+.episodeTitle { font-weight: 600; font-size: 13px; flex: 1; min-width: 100px; }
+.episodeMeta { font-size: 12px; color: #6b6459; }
+.episodeEditBtn { padding: 4px 10px; font-size: 12px; }
+.addEpisodeForm { margin-top: 12px; padding: 12px; background: #fff; border: 1px solid #e3dacb; border-radius: 8px; }
+.addEpisodeForm h4 { margin: 0 0 10px; font-size: 14px; color: #4b4435; }
+.addEpisodeBtn { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; }
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
 </style>
