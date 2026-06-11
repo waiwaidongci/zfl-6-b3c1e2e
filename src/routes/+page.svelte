@@ -53,6 +53,11 @@
   let rejectingSignupId = '';
   let rejectionReason = '';
 
+  let importCsvText = '';
+  let importPreview = null;
+  let importErrors = [];
+  let importStats = null;
+
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
     const storedEvents = localStorage.getItem('zfl-6-events');
@@ -509,6 +514,203 @@
     rejectingSignupId = '';
     rejectionReason = '';
   }
+
+  function parseCsvLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  }
+
+  function parseCsv(text) {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length === 0) return { headers: [], rows: [] };
+    const headers = parseCsvLine(lines[0]).map((h) => h.trim());
+    const rows = lines.slice(1).map((line) => parseCsvLine(line).map((c) => c.trim()));
+    return { headers, rows };
+  }
+
+  function previewImport() {
+    if (!importCsvText.trim()) {
+      importPreview = null;
+      importErrors = ['请先粘贴CSV文本'];
+      importStats = null;
+      return;
+    }
+
+    const { headers, rows } = parseCsv(importCsvText);
+    const errors = [];
+    const eventsToAdd = [];
+    const signupsToAdd = [];
+    const duplicates = [];
+
+    const headerMap = {};
+    headers.forEach((h, i) => { headerMap[h] = i; });
+
+    const requiredSignupHeaders = ['活动', '姓名', '手机'];
+    const missingHeaders = requiredSignupHeaders.filter((h) => !(h in headerMap));
+    if (missingHeaders.length > 0) {
+      errors.push(`缺少必要列：${missingHeaders.join('、')}`);
+    }
+
+    if (errors.length > 0) {
+      importPreview = null;
+      importErrors = errors;
+      importStats = null;
+      return;
+    }
+
+    const eventBookCache = {};
+    events.forEach((e) => { eventBookCache[e.book] = e; });
+
+    rows.forEach((row, idx) => {
+      const lineNum = idx + 2;
+      const bookName = row[headerMap['活动']] || '';
+      const name = row[headerMap['姓名']] || '';
+      const phone = row[headerMap['手机']] || '';
+      const answer = headerMap['回答'] in row ? row[headerMap['回答']] : '';
+      const status = headerMap['报名类型'] in row ? row[headerMap['报名类型']] : '正式';
+      const reviewStatus = headerMap['审核状态'] in row ? row[headerMap['审核状态']] : '已通过';
+      const rejectionReason = headerMap['拒绝原因'] in row && row[headerMap['拒绝原因']] !== '-' ? row[headerMap['拒绝原因']] : '';
+      const createdAt = headerMap['报名时间'] in row && row[headerMap['报名时间']] !== '-' ? row[headerMap['报名时间']] : new Date().toLocaleString();
+      const reviewedAt = headerMap['审核时间'] in row && row[headerMap['审核时间']] !== '-' ? row[headerMap['审核时间']] : '';
+      const checkedIn = headerMap['签到状态'] in row ? row[headerMap['签到状态']] === '已到场' : false;
+      const checkedInAt = headerMap['签到时间'] in row && row[headerMap['签到时间']] !== '-' ? row[headerMap['签到时间']] : '';
+      const waitlistPosition = headerMap['候补顺序'] in row && row[headerMap['候补顺序']] !== '-' ? Number(row[headerMap['候补顺序']]) : undefined;
+
+      if (!bookName) {
+        errors.push(`第${lineNum}行：活动名称为空`);
+        return;
+      }
+      if (!name) {
+        errors.push(`第${lineNum}行：姓名为空`);
+        return;
+      }
+      if (!phone) {
+        errors.push(`第${lineNum}行：手机号为空`);
+        return;
+      }
+
+      let event = eventBookCache[bookName];
+      if (!event) {
+        if (!eventsToAdd.find((e) => e.book === bookName)) {
+          event = {
+            id: crypto.randomUUID(),
+            book: bookName,
+            author: '',
+            description: '',
+            host: '',
+            time: `${iso(7)}T19:30`,
+            limit: 20,
+            question: '',
+            status: '开放报名',
+            reviewRequired: false,
+            _isNew: true
+          };
+          eventsToAdd.push(event);
+          eventBookCache[bookName] = event;
+        } else {
+          event = eventsToAdd.find((e) => e.book === bookName);
+        }
+      }
+
+      const existingSignup = signups.find(
+        (s) => s.eventId === event.id && s.phone === phone
+      );
+      const pendingSignup = signupsToAdd.find(
+        (s) => s.eventId === event.id && s.phone === phone
+      );
+
+      if (existingSignup || pendingSignup) {
+        duplicates.push({ line: lineNum, book: bookName, name, phone, reason: existingSignup ? '已存在报名记录' : 'CSV内重复' });
+        return;
+      }
+
+      let effectiveStatus = status;
+      let effectiveWaitlistPosition = waitlistPosition;
+      if (reviewStatus === '已拒绝') {
+        effectiveStatus = '已拒绝';
+        effectiveWaitlistPosition = undefined;
+      } else if (reviewStatus === '待审核') {
+        effectiveStatus = '待审核';
+        effectiveWaitlistPosition = undefined;
+      } else if (status === '候补' && !waitlistPosition) {
+        effectiveWaitlistPosition = 1;
+      }
+
+      signupsToAdd.push({
+        id: crypto.randomUUID(),
+        eventId: event.id,
+        name,
+        phone,
+        answer,
+        status: effectiveStatus,
+        waitlistPosition: effectiveWaitlistPosition,
+        reviewStatus,
+        rejectionReason,
+        reviewedAt,
+        checkedIn,
+        checkedInAt,
+        createdAt,
+        _lineNum: lineNum,
+        _eventBook: bookName
+      });
+    });
+
+    const stats = {
+      eventCount: eventsToAdd.length,
+      signupCount: signupsToAdd.length,
+      duplicateCount: duplicates.length,
+      errorCount: errors.length
+    };
+
+    importPreview = { events: eventsToAdd, signups: signupsToAdd, duplicates };
+    importErrors = errors;
+    importStats = stats;
+  }
+
+  function confirmImport() {
+    if (!importPreview) return;
+
+    importPreview.events.forEach((ev) => {
+      const { _isNew, ...eventData } = ev;
+      events = [{ ...eventData }, ...events];
+    });
+
+    importPreview.signups.forEach((sg) => {
+      const { _lineNum, _eventBook, ...signupData } = sg;
+      signups = [{ ...signupData }, ...signups];
+    });
+
+    importCsvText = '';
+    importPreview = null;
+    importErrors = [];
+    importStats = null;
+  }
+
+  function cancelImport() {
+    importCsvText = '';
+    importPreview = null;
+    importErrors = [];
+    importStats = null;
+  }
 </script>
 
 <main>
@@ -779,6 +981,7 @@
           <button class:active={adminTab === '活动管理'} on:click={() => adminTab = '活动管理'}>活动管理</button>
           <button class:active={adminTab === '系列活动'} on:click={() => adminTab = '系列活动'}>系列活动</button>
           <button class:active={adminTab === '书目库'} on:click={() => adminTab = '书目库'}>书目库</button>
+          <button class:active={adminTab === '数据导入'} on:click={() => adminTab = '数据导入'}>数据导入</button>
         </div>
 
         {#if adminTab === '系列活动'}
@@ -1062,7 +1265,7 @@
               <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
             </section>
           </section>
-        {:else}
+        {:else if adminTab === '书目库'}
           <section class="bookLibrary">
             <form class="panel bookForm" on:submit|preventDefault={createBook}>
               <h2><BookPlus size={18} />{editingBookId ? '编辑书籍' : '添加书籍'}</h2>
@@ -1103,6 +1306,121 @@
                 {/each}
               {/if}
             </section>
+          </section>
+        {:else if adminTab === '数据导入'}
+          <section class="importSection">
+            <section class="panel">
+              <h2><Download size={18} />CSV数据导入</h2>
+              <p class="importHint">兼容现有CSV导出格式，支持批量导入活动和报名名单。必要列：活动、姓名、手机。可选列：回答、报名类型、审核状态、拒绝原因、报名时间、审核时间、签到状态、签到时间、候补顺序。</p>
+              <textarea bind:value={importCsvText} placeholder="粘贴CSV文本，首行为表头&#10;例如：&#10;活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序&#10;秋园,张三,13800138000,第一章,正式,已通过,-,2024/1/1 10:00,-,未到场,-,-"></textarea>
+              <div class="formActions">
+                <button type="button" on:click={previewImport}>预览导入结果</button>
+                {#if importPreview || importErrors.length > 0}
+                  <button type="button" class="ghost" on:click={cancelImport}>清空</button>
+                {/if}
+              </div>
+            </section>
+
+            {#if importErrors.length > 0}
+              <section class="panel importErrorsPanel">
+                <h3 class="importErrorTitle">⚠️ 发现 {importErrors.length} 个错误</h3>
+                <ul class="importErrorList">
+                  {#each importErrors as err}
+                    <li>{err}</li>
+                  {/each}
+                </ul>
+              </section>
+            {/if}
+
+            {#if importPreview}
+              <section class="panel importPreviewPanel">
+                <div class="importStats">
+                  <div class="importStatItem">
+                    <strong>{importStats.eventCount}</strong>
+                    <span>新增活动</span>
+                  </div>
+                  <div class="importStatItem">
+                    <strong>{importStats.signupCount}</strong>
+                    <span>新增报名</span>
+                  </div>
+                  <div class="importStatItem warn">
+                    <strong>{importStats.duplicateCount}</strong>
+                    <span>重复跳过</span>
+                  </div>
+                  <div class="importStatItem error">
+                    <strong>{importStats.errorCount}</strong>
+                    <span>错误行数</span>
+                  </div>
+                </div>
+
+                {#if importPreview.events.length > 0}
+                  <h3 class="importSectionTitle">📅 将要新增的活动</h3>
+                  <div class="importPreviewList">
+                    {#each importPreview.events as ev}
+                      <div class="importPreviewItem">
+                        <strong>{ev.book}</strong>
+                        <span class="importItemMeta">默认时间：{ev.time.replace('T', ' ')} · 人数上限：{ev.limit}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                {#if importPreview.signups.length > 0}
+                  <h3 class="importSectionTitle">👥 将要新增的报名记录</h3>
+                  <div class="importPreviewTableWrap">
+                    <table class="importPreviewTable">
+                      <thead>
+                        <tr>
+                          <th>行号</th>
+                          <th>活动</th>
+                          <th>姓名</th>
+                          <th>手机</th>
+                          <th>报名类型</th>
+                          <th>审核状态</th>
+                          <th>签到状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {#each importPreview.signups.slice(0, 50) as sg}
+                          <tr>
+                            <td>{sg._lineNum}</td>
+                            <td>{sg._eventBook}</td>
+                            <td>{sg.name}</td>
+                            <td>{sg.phone}</td>
+                            <td><span class="status-badge {sg.status === '正式' ? 'regular' : sg.status === '候补' ? 'waitlist' : sg.status === '待审核' ? 'pending' : 'rejected'}">{sg.status}</span></td>
+                            <td><span class="status-badge {sg.reviewStatus === '已通过' ? 'regular' : sg.reviewStatus === '待审核' ? 'pending' : 'rejected'}">{sg.reviewStatus}</span></td>
+                            <td><span class="checkin-badge {sg.checkedIn ? 'checked' : 'unchecked'}">{sg.checkedIn ? '已到场' : '未到场'}</span></td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                    {#if importPreview.signups.length > 50}
+                      <p class="importMoreHint">... 还有 {importPreview.signups.length - 50} 条记录未显示</p>
+                    {/if}
+                  </div>
+                {/if}
+
+                {#if importPreview.duplicates.length > 0}
+                  <h3 class="importSectionTitle">⚠️ 重复记录（将被跳过）</h3>
+                  <div class="importPreviewList">
+                    {#each importPreview.duplicates as dp}
+                      <div class="importPreviewItem duplicate">
+                        <span class="importItemLine">第{dp.line}行</span>
+                        <strong>{dp.name}</strong>
+                        <span class="importItemMeta">{dp.book} · {dp.phone} · {dp.reason}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="importConfirmActions">
+                  <button on:click={confirmImport} disabled={importPreview.signups.length === 0 && importPreview.events.length === 0}>
+                    确认导入
+                  </button>
+                  <button type="button" class="ghost" on:click={cancelImport}>取消</button>
+                </div>
+              </section>
+            {/if}
           </section>
         {/if}
       </div>
@@ -1313,5 +1631,37 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .rejection-reason { margin: 6px 0 0; padding: 8px 10px; background: #f8d7da; border-radius: 6px; color: #721c24; font-size: 13px; }
 .rejection-reason-display { display: block; width: 100%; margin-top: 6px; padding: 8px 10px; background: #f8d7da; border-radius: 6px; color: #721c24; font-size: 13px; }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
+.importSection { display: grid; gap: 16px; }
+.importHint { margin: 0 0 10px; padding: 10px 12px; background: #f8f5ee; border: 1px solid #e1d8ca; border-radius: 8px; color: #6b6459; font-size: 13px; line-height: 1.6; }
+.importErrorsPanel { background: #fff5f5; border-color: #f5c6cb; }
+.importErrorTitle { margin: 0 0 10px; color: #721c24; font-size: 16px; }
+.importErrorList { margin: 0; padding-left: 20px; color: #721c24; font-size: 14px; }
+.importErrorList li { margin-bottom: 4px; }
+.importStats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.importStatItem { background: #f8f5ee; border: 1px solid #e1d8ca; border-radius: 8px; padding: 14px; text-align: center; }
+.importStatItem strong { display: block; font-size: 28px; color: #4b4435; }
+.importStatItem span { display: block; font-size: 13px; color: #6b6459; margin-top: 4px; }
+.importStatItem.warn { background: #fff8ee; border-color: #ffcc80; }
+.importStatItem.warn strong { color: #b36b00; }
+.importStatItem.warn span { color: #995a00; }
+.importStatItem.error { background: #fff5f5; border-color: #f5c6cb; }
+.importStatItem.error strong { color: #a33; }
+.importStatItem.error span { color: #721c24; }
+.importSectionTitle { margin: 16px 0 10px; font-size: 15px; color: #4b4435; }
+.importPreviewList { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.importPreviewItem { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fffaf2; border: 1px solid #e3dacb; border-radius: 6px; flex-wrap: wrap; }
+.importPreviewItem.duplicate { background: #fff8ee; border-color: #ffcc80; }
+.importPreviewItem strong { font-size: 14px; }
+.importItemLine { display: inline-block; padding: 2px 8px; background: #efe7d8; color: #7b6b4e; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.importItemMeta { font-size: 13px; color: #6b6459; }
+.importPreviewTableWrap { overflow-x: auto; margin-bottom: 8px; }
+.importPreviewTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.importPreviewTable th, .importPreviewTable td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e3dacb; }
+.importPreviewTable th { background: #f8f5ee; color: #4b4435; font-weight: 600; font-size: 12px; }
+.importPreviewTable tbody tr:hover { background: #fffaf2; }
+.importMoreHint { margin: 8px 0 0; text-align: center; color: #999; font-size: 13px; }
+.importConfirmActions { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px dashed #e3dacb; }
+.importConfirmActions button { flex: 1; }
+
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } }
 </style>
