@@ -14,8 +14,8 @@
   ];
 
   const seedEvents = [
-    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名' },
-    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名' }
+    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名', reviewRequired: false },
+    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名', reviewRequired: false }
   ];
 
   const seedSeries = [];
@@ -30,7 +30,7 @@
   let listViewTab = '全部活动';
   let selectedSeriesId = '';
   let selectedBookId = '';
-  let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   let bookForm = { title: '', author: '', description: '', question: '' };
   let editingBookId = '';
   let editingEventId = '';
@@ -48,8 +48,10 @@
   let seriesForm = { title: '', description: '' };
   let editingSeriesId = '';
   let addingEventToSeriesId = '';
-  let seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   let selectedSeriesBookId = '';
+  let rejectingSignupId = '';
+  let rejectionReason = '';
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -58,14 +60,29 @@
     const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
     const storedSeries = localStorage.getItem('zfl-6-series');
     if (storedBooks) books = JSON.parse(storedBooks);
-    if (storedEvents) events = JSON.parse(storedEvents);
+    if (storedEvents) {
+      const parsed = JSON.parse(storedEvents);
+      events = parsed.map((item) => {
+        if (item.reviewRequired === undefined) {
+          return { ...item, reviewRequired: false };
+        }
+        return item;
+      });
+    }
     if (storedSignups) {
       const parsed = JSON.parse(storedSignups);
       signups = parsed.map((item) => {
-        if (!item.status) {
-          return { ...item, status: '正式', waitlistPosition: undefined };
+        let updated = { ...item };
+        if (!updated.status) {
+          updated.status = '正式';
+          updated.waitlistPosition = undefined;
         }
-        return item;
+        if (updated.reviewStatus === undefined) {
+          updated.reviewStatus = '已通过';
+          updated.rejectionReason = '';
+          updated.reviewedAt = '';
+        }
+        return updated;
       });
     }
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
@@ -85,18 +102,25 @@
   $: standaloneEvents = events.filter((e) => !e.seriesId);
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
   $: selectedSignups = signups.filter((item) => item.eventId === selectedEvent?.id);
-  $: selectedRegularSignups = selectedSignups.filter((item) => item.status === '正式');
-  $: selectedWaitlistSignups = selectedSignups.filter((item) => item.status === '候补').sort((a, b) => a.waitlistPosition - b.waitlistPosition);
+  $: selectedApprovedSignups = selectedSignups.filter((item) => item.reviewStatus === '已通过');
+  $: selectedPendingSignups = selectedSignups.filter((item) => item.reviewStatus === '待审核').sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  $: selectedRejectedSignups = selectedSignups.filter((item) => item.reviewStatus === '已拒绝').sort((a, b) => (b.reviewedAt || '').localeCompare(a.reviewedAt || ''));
+  $: selectedRegularSignups = selectedApprovedSignups.filter((item) => item.status === '正式');
+  $: selectedWaitlistSignups = selectedApprovedSignups.filter((item) => item.status === '候补').sort((a, b) => a.waitlistPosition - b.waitlistPosition);
   $: mySignups = signups.filter((item) => mySignupIds.includes(item.id));
   $: checkedInCount = signups.filter((item) => item.checkedIn).length;
   $: selectedCheckedInCount = selectedRegularSignups.filter((item) => item.checkedIn).length;
+  $: pendingCount = selectedPendingSignups.length;
+  $: rejectedCount = selectedRejectedSignups.length;
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedRegularSignups.length) : 0;
   $: waitlistCount = selectedWaitlistSignups.length;
-  $: csv = ['活动,姓名,手机,回答,报名类型,报名时间,签到状态,签到时间,候补顺序', ...selectedSignups.sort((a, b) => {
+  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...selectedSignups.sort((a, b) => {
+    const statusOrder = { '待审核': 0, '已通过': 1, '已拒绝': 2 };
+    if (statusOrder[a.reviewStatus] !== statusOrder[b.reviewStatus]) return statusOrder[a.reviewStatus] - statusOrder[b.reviewStatus];
     if (a.status !== b.status) return a.status === '正式' ? -1 : 1;
     if (a.status === '候补') return a.waitlistPosition - b.waitlistPosition;
-    return 0;
-  }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
+    return a.createdAt.localeCompare(b.createdAt);
+  }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
 
   $: seriesWithEvents = series.map((s) => {
     const sEvents = events.filter((e) => e.seriesId === s.id).sort((a, b) => a.time.localeCompare(b.time));
@@ -197,13 +221,13 @@
   function startAddEventToSeries(seriesId) {
     addingEventToSeriesId = seriesId;
     selectedSeriesBookId = '';
-    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   }
 
   function cancelAddEventToSeries() {
     addingEventToSeriesId = '';
     selectedSeriesBookId = '';
-    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   }
 
   function addEventToSeries() {
@@ -265,7 +289,7 @@
       selectedId = event.id;
     }
     clearBookSelection();
-    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   }
 
   function editEvent(event) {
@@ -274,7 +298,7 @@
     editingEventSeriesId = event.seriesId;
     editingEventSeriesIndex = event.seriesIndex;
     selectedBookId = '';
-    eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status };
+    eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status, reviewRequired: event.reviewRequired || false };
   }
 
   function cancelEditEvent() {
@@ -283,7 +307,7 @@
     editingEventSeriesId = undefined;
     editingEventSeriesIndex = undefined;
     clearBookSelection();
-    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   }
 
   function createBook() {
@@ -343,7 +367,7 @@
     const event = eventSource.find((e) => e.id === eventId);
     if (!event) return;
 
-    const eventSignups = signups.filter((item) => item.eventId === eventId);
+    const eventSignups = signups.filter((item) => item.eventId === eventId && item.reviewStatus === '已通过');
     const regularCount = eventSignups.filter((item) => item.status === '正式').length;
     const limit = Number(event.limit);
 
@@ -376,14 +400,20 @@
   function signup() {
     if (!selectedEvent || selectedEvent.status !== '开放报名' || !signupForm.name.trim()) return;
 
-    const eventSignups = signups.filter((item) => item.eventId === selectedEvent.id);
+    const eventSignups = signups.filter((item) => item.eventId === selectedEvent.id && item.reviewStatus === '已通过');
     const regularCount = eventSignups.filter((item) => item.status === '正式').length;
     const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
 
     let status = '正式';
     let waitlistPosition = undefined;
+    let reviewStatus = '已通过';
+    let rejectionReason = '';
+    let reviewedAt = '';
 
-    if (regularCount >= Number(selectedEvent.limit)) {
+    if (selectedEvent.reviewRequired) {
+      status = '待审核';
+      reviewStatus = '待审核';
+    } else if (regularCount >= Number(selectedEvent.limit)) {
       status = '候补';
       waitlistPosition = waitlistCount + 1;
     }
@@ -394,6 +424,9 @@
       ...signupForm,
       status,
       waitlistPosition,
+      reviewStatus,
+      rejectionReason,
+      reviewedAt,
       checkedIn: false,
       checkedInAt: '',
       createdAt: new Date().toLocaleString()
@@ -407,12 +440,12 @@
     const signup = signups.find((item) => item.id === id);
     signups = signups.filter((item) => item.id !== id);
     mySignupIds = mySignupIds.filter((mid) => mid !== id);
-    if (signup && signup.status === '正式') {
+    if (signup && signup.status === '正式' && signup.reviewStatus === '已通过') {
       promoteFromWaitlist(signup.eventId);
-    } else if (signup && signup.status === '候补') {
-      const eventSignups = signups.filter((item) => item.eventId === signup.eventId && item.status === '候补');
+    } else if (signup && signup.status === '候补' && signup.reviewStatus === '已通过') {
+      const eventSignups = signups.filter((item) => item.eventId === signup.eventId && item.status === '候补' && item.reviewStatus === '已通过');
       signups = signups.map((item) => {
-        if (item.eventId === signup.eventId && item.status === '候补' && item.waitlistPosition > signup.waitlistPosition) {
+        if (item.eventId === signup.eventId && item.status === '候补' && item.reviewStatus === '已通过' && item.waitlistPosition > signup.waitlistPosition) {
           return { ...item, waitlistPosition: item.waitlistPosition - 1 };
         }
         return item;
@@ -426,8 +459,55 @@
 
   function toggleCheckIn(id) {
     const signup = signups.find((item) => item.id === id);
-    if (signup && signup.status !== '正式') return;
+    if (!signup || signup.status !== '正式' || signup.reviewStatus !== '已通过') return;
     signups = signups.map((item) => item.id === id ? { ...item, checkedIn: !item.checkedIn, checkedInAt: !item.checkedIn ? new Date().toLocaleString() : '' } : item);
+  }
+
+  function approveSignup(id) {
+    const signup = signups.find((item) => item.id === id);
+    if (!signup || signup.reviewStatus !== '待审核') return;
+
+    const event = events.find((e) => e.id === signup.eventId);
+    if (!event) return;
+
+    const eventSignups = signups.filter((item) => item.eventId === event.id && item.reviewStatus === '已通过');
+    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
+    const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
+
+    let status = '正式';
+    let waitlistPosition = undefined;
+
+    if (regularCount >= Number(event.limit)) {
+      status = '候补';
+      waitlistPosition = waitlistCount + 1;
+    }
+
+    signups = signups.map((item) =>
+      item.id === id
+        ? { ...item, status, waitlistPosition, reviewStatus: '已通过', reviewedAt: new Date().toLocaleString() }
+        : item
+    );
+  }
+
+  function startRejectSignup(id) {
+    rejectingSignupId = id;
+    rejectionReason = '';
+  }
+
+  function cancelRejectSignup() {
+    rejectingSignupId = '';
+    rejectionReason = '';
+  }
+
+  function confirmRejectSignup() {
+    if (!rejectingSignupId || !rejectionReason.trim()) return;
+    signups = signups.map((item) =>
+      item.id === rejectingSignupId
+        ? { ...item, status: '已拒绝', reviewStatus: '已拒绝', rejectionReason: rejectionReason.trim(), reviewedAt: new Date().toLocaleString() }
+        : item
+    );
+    rejectingSignupId = '';
+    rejectionReason = '';
   }
 </script>
 
@@ -624,10 +704,17 @@
             <input bind:value={signupForm.name} placeholder="姓名" />
             <input bind:value={signupForm.phone} placeholder="联系方式" />
             <textarea bind:value={signupForm.answer} placeholder={selectedEvent.question || '报名备注'}></textarea>
-            {#if seatsLeft <= 0 && selectedEvent.status === '开放报名'}
+            {#if selectedEvent.reviewRequired}
+              <p class="reviewNotice">📋 本活动需要审核，提交后请等待管理员审核通过</p>
+            {:else if seatsLeft <= 0 && selectedEvent.status === '开放报名'}
               <p class="waitlistNotice">⚠️ 活动已报满，提交后将加入候补名单</p>
             {/if}
-            <button disabled={selectedEvent.status !== '开放报名'}>{seatsLeft <= 0 ? '加入候补' : '提交报名'}</button>
+            {#if selectedEvent.status === '已关闭'}
+              <p class="waitlistNotice">🔒 报名已关闭，无法提交新申请</p>
+            {/if}
+            <button disabled={selectedEvent.status !== '开放报名'}>
+              {selectedEvent.status !== '开放报名' ? '报名已关闭' : (selectedEvent.reviewRequired ? '提交审核' : (seatsLeft <= 0 ? '加入候补' : '提交报名'))}
+            </button>
           </form>
           {#if eventSeries && seriesEvents.length > 1}
             <div class="seriesEventsPanel">
@@ -651,15 +738,21 @@
               <h3>我的报名</h3>
               {#each mySignups as item}
                 {@const event = events.find((e) => e.id === item.eventId)}
-                <article class="mySignup-card" class:waitlist-card={item.status === '候补'}>
+                <article class="mySignup-card" class:waitlist-card={item.status === '候补'} class:pending-card={item.reviewStatus === '待审核'} class:rejected-card={item.reviewStatus === '已拒绝'}>
                   <strong>{event?.book || '未知活动'}</strong>
                   <span>{event?.host} · {event?.time?.replace('T', ' ')}</span>
                   <span>报名时间：{item.createdAt}</span>
                   <div class="mySignup-status">
-                    <span class="status-badge" class:regular={item.status === '正式'} class:waitlist={item.status === '候补'}>
-                      {item.status === '正式' ? '正式报名' : `候补 #${item.waitlistPosition}`}
-                    </span>
-                    {#if item.status === '正式'}
+                    {#if item.reviewStatus === '待审核'}
+                      <span class="status-badge pending">待审核</span>
+                    {:else if item.reviewStatus === '已拒绝'}
+                      <span class="status-badge rejected">已拒绝</span>
+                    {:else if item.status === '正式'}
+                      <span class="status-badge regular">正式报名</span>
+                    {:else if item.status === '候补'}
+                      <span class="status-badge waitlist">候补 #{item.waitlistPosition}</span>
+                    {/if}
+                    {#if item.reviewStatus === '已通过' && item.status === '正式'}
                       <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
                         {item.checkedIn ? '已到场' : '未到场'}
                       </span>
@@ -667,8 +760,13 @@
                     {#if item.checkedIn && item.checkedInAt}
                       <span class="checkin-time">签到时间：{item.checkedInAt}</span>
                     {/if}
+                    {#if item.reviewStatus === '已拒绝' && item.rejectionReason}
+                      <span class="rejection-reason-display">拒绝原因：{item.rejectionReason}</span>
+                    {/if}
                   </div>
-                  <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>{item.status === '正式' ? '取消报名' : '退出候补'}</button>
+                  <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>
+                    {item.reviewStatus === '待审核' ? '取消申请' : (item.reviewStatus === '已拒绝' ? '删除记录' : (item.status === '正式' ? '取消报名' : '退出候补'))}
+                  </button>
                 </article>
               {/each}
             </div>
@@ -754,6 +852,13 @@
                             <option>开放报名</option>
                             <option>已关闭</option>
                           </select>
+                          <div class="reviewSetting">
+                            <label class="reviewLabel">
+                              <input type="checkbox" bind:checked={seriesEventForm.reviewRequired} />
+                              <span>报名需要审核</span>
+                            </label>
+                            <p class="reviewHint">{seriesEventForm.reviewRequired ? '用户提交后需管理员审核通过才占用名额' : '用户提交后直接占用名额'}</p>
+                          </div>
                           <div class="formActions">
                             <button type="button" on:click={addEventToSeries}>添加到此系列</button>
                             <button type="button" class="ghost" on:click={cancelAddEventToSeries}>取消</button>
@@ -810,6 +915,13 @@
                   <option>开放报名</option>
                   <option>已关闭</option>
                 </select>
+                <div class="reviewSetting">
+                  <label class="reviewLabel">
+                    <input type="checkbox" bind:checked={eventForm.reviewRequired} />
+                    <span>报名需要审核</span>
+                  </label>
+                  <p class="reviewHint">{eventForm.reviewRequired ? '用户提交后需管理员审核通过才占用名额' : '用户提交后直接占用名额'}</p>
+                </div>
                 <div class="formActions">
                   <button>{editingEventId ? '保存修改' : '保存活动'}</button>
                   {#if editingEventId}
@@ -823,10 +935,51 @@
               <div class="eventHead">
                 <h2>报名名单</h2>
                 <div class="eventHead-actions">
-                  <span class="checkin-summary">正式 {selectedRegularSignups.length}/{selectedEvent?.limit || 0} · 候补 {waitlistCount} · 签到 {selectedCheckedInCount}/{selectedRegularSignups.length}</span>
+                  <span class="checkin-summary">
+                    正式 {selectedRegularSignups.length}/{selectedEvent?.limit || 0} ·
+                    候补 {waitlistCount} ·
+                    {#if selectedEvent?.reviewRequired}
+                      <span class="pending-indicator">待审 {pendingCount} ·</span>
+                      <span class="rejected-indicator">已拒 {rejectedCount} ·</span>
+                    {/if}
+                    签到 {selectedCheckedInCount}/{selectedRegularSignups.length}
+                  </span>
                   {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
                 </div>
               </div>
+
+              {#if selectedEvent?.reviewRequired && selectedPendingSignups.length > 0}
+                <h3 class="signupSectionTitle pendingSectionTitle">待审核 ({pendingCount})</h3>
+                <div class="signupList">
+                  {#each selectedPendingSignups as item}
+                    <article class="pending-card">
+                      {#if rejectingSignupId === item.id}
+                        <div class="rejectForm">
+                          <h4>拒绝原因</h4>
+                          <textarea bind:value={rejectionReason} placeholder="请填写拒绝原因"></textarea>
+                          <div class="formActions">
+                            <button on:click={confirmRejectSignup} disabled={!rejectionReason.trim()}>确认拒绝</button>
+                            <button type="button" class="ghost" on:click={cancelRejectSignup}>取消</button>
+                          </div>
+                        </div>
+                      {:else}
+                        <div class="signupRow">
+                          <div>
+                            <strong>{item.name}</strong>
+                            <span>{item.phone} · {item.createdAt}</span>
+                            <p>{item.answer}</p>
+                          </div>
+                          <span class="status-badge pending">待审核</span>
+                        </div>
+                        <div class="signupActions">
+                          <button class="ghost approve-btn" on:click={() => approveSignup(item.id)}>✓ 通过</button>
+                          <button class="ghost danger reject-btn" on:click={() => startRejectSignup(item.id)}>✗ 拒绝</button>
+                        </div>
+                      {/if}
+                    </article>
+                  {/each}
+                </div>
+              {/if}
 
               {#if selectedRegularSignups.length > 0}
                 <h3 class="signupSectionTitle">正式报名 ({selectedRegularSignups.length})</h3>
@@ -875,6 +1028,28 @@
                       </div>
                       <div class="signupActions">
                         <button class="ghost" on:click={() => cancelSignup(item.id)}>退出候补</button>
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if selectedEvent?.reviewRequired && selectedRejectedSignups.length > 0}
+                <h3 class="signupSectionTitle rejectedSectionTitle">已拒绝 ({rejectedCount})</h3>
+                <div class="signupList">
+                  {#each selectedRejectedSignups as item}
+                    <article class="rejected-card">
+                      <div class="signupRow">
+                        <div>
+                          <strong>{item.name}</strong>
+                          <span>{item.phone} · {item.createdAt} · 拒绝时间：{item.reviewedAt}</span>
+                          <p>{item.answer}</p>
+                          <p class="rejection-reason">拒绝原因：{item.rejectionReason}</p>
+                        </div>
+                        <span class="status-badge rejected">已拒绝</span>
+                      </div>
+                      <div class="signupActions">
+                        <button class="ghost" on:click={() => cancelSignup(item.id)}>删除记录</button>
                       </div>
                     </article>
                   {/each}
@@ -1103,5 +1278,40 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .addEpisodeForm { margin-top: 12px; padding: 12px; background: #fff; border: 1px solid #e3dacb; border-radius: 8px; }
 .addEpisodeForm h4 { margin: 0 0 10px; font-size: 14px; color: #4b4435; }
 .addEpisodeBtn { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; }
+
+.status-badge.pending { background: #fff3cd; color: #856404; }
+.status-badge.rejected { background: #f8d7da; color: #721c24; }
+
+.pending-card { background: #fffbf0; border: 1px dashed #ffe082 !important; }
+.rejected-card { background: #fff5f5; border: 1px solid #f5c6cb !important; }
+
+.mySignup-card.pending-card { background: #fffbf0; border: 1px dashed #ffe082 !important; }
+.mySignup-card.rejected-card { background: #fff5f5; border: 1px solid #f5c6cb !important; }
+
+.signupSectionTitle.pendingSectionTitle { color: #856404; }
+.signupSectionTitle.rejectedSectionTitle { color: #721c24; }
+
+.reviewSetting { background: #f8f5ee; border: 1px solid #e1d8ca; border-radius: 8px; padding: 12px; margin-bottom: 4px; }
+.reviewLabel { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; }
+.reviewLabel input { width: auto; margin: 0; cursor: pointer; }
+.reviewHint { margin: 8px 0 0; font-size: 13px; color: #6b6459; }
+
+.reviewNotice { margin: 0; padding: 10px 12px; background: #fff3cd; border: 1px solid #ffe082; border-radius: 8px; color: #856404; font-size: 14px; }
+
+.pending-indicator { color: #856404; }
+.rejected-indicator { color: #721c24; }
+
+.approve-btn { color: #1e7e34; background: #e6f4ea; }
+.approve-btn:hover { background: #d4edda; }
+.reject-btn { color: #721c24; background: #f8d7da; }
+.reject-btn:hover { background: #f5c6cb; }
+
+.rejectForm { width: 100%; }
+.rejectForm h4 { margin: 0 0 8px; font-size: 14px; color: #721c24; }
+.rejectForm textarea { min-height: 60px; margin-bottom: 8px; }
+
+.rejection-reason { margin: 6px 0 0; padding: 8px 10px; background: #f8d7da; border-radius: 6px; color: #721c24; font-size: 13px; }
+.rejection-reason-display { display: block; width: 100%; margin-top: 6px; padding: 8px 10px; background: #f8d7da; border-radius: 6px; color: #721c24; font-size: 13px; }
+
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
 </style>
