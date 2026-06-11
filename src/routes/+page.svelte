@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { CalendarPlus, Download, LibraryBig, ListChecks, Users } from 'lucide-svelte';
+  import { CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users } from 'lucide-svelte';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -18,13 +18,16 @@
   let selectedId = seedEvents[0].id;
   let mode = '用户端';
   let eventForm = { book: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
 
   onMount(() => {
     const storedEvents = localStorage.getItem('zfl-6-events');
     const storedSignups = localStorage.getItem('zfl-6-signups');
+    const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
     if (storedEvents) events = JSON.parse(storedEvents);
     if (storedSignups) signups = JSON.parse(storedSignups);
+    if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
     selectedId = events[0]?.id || '';
   });
 
@@ -32,11 +35,15 @@
   $: if (localStorageAvailable) {
     localStorage.setItem('zfl-6-events', JSON.stringify(events));
     localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
+    localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
   }
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
   $: selectedSignups = signups.filter((item) => item.eventId === selectedEvent?.id);
+  $: mySignups = signups.filter((item) => mySignupIds.includes(item.id));
+  $: checkedInCount = signups.filter((item) => item.checkedIn).length;
+  $: selectedCheckedInCount = selectedSignups.filter((item) => item.checkedIn).length;
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedSignups.length) : 0;
-  $: csv = ['活动,姓名,手机,回答,报名时间', ...selectedSignups.map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.createdAt}"`)].join('\n');
+  $: csv = ['活动,姓名,手机,回答,报名时间,签到状态,签到时间', ...selectedSignups.map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}"`)].join('\n');
 
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
@@ -48,7 +55,9 @@
 
   function signup() {
     if (!selectedEvent || selectedEvent.status !== '开放报名' || seatsLeft <= 0 || !signupForm.name.trim()) return;
-    signups = [{ id: crypto.randomUUID(), eventId: selectedEvent.id, ...signupForm, createdAt: new Date().toLocaleString() }, ...signups];
+    const newSignup = { id: crypto.randomUUID(), eventId: selectedEvent.id, ...signupForm, checkedIn: false, checkedInAt: '', createdAt: new Date().toLocaleString() };
+    signups = [newSignup, ...signups];
+    mySignupIds = [...mySignupIds, newSignup.id];
     signupForm = { name: '', phone: '', answer: '' };
   }
 
@@ -58,6 +67,10 @@
 
   function toggleEventStatus(id) {
     events = events.map((event) => event.id === id ? { ...event, status: event.status === '开放报名' ? '已关闭' : '开放报名' } : event);
+  }
+
+  function toggleCheckIn(id) {
+    signups = signups.map((item) => item.id === id ? { ...item, checkedIn: !item.checkedIn, checkedInAt: !item.checkedIn ? new Date().toLocaleString() : '' } : item);
   }
 </script>
 
@@ -77,6 +90,7 @@
     <article><LibraryBig size={22} /><strong>{events.length}</strong><span>活动</span></article>
     <article><Users size={22} /><strong>{signups.length}</strong><span>报名</span></article>
     <article><ListChecks size={22} /><strong>{events.filter((event) => event.status === '开放报名').length}</strong><span>开放中</span></article>
+    <article><UserCheck size={22} /><strong>{checkedInCount}</strong><span>已签到</span></article>
   </section>
 
   <section class="layout">
@@ -106,6 +120,28 @@
             <textarea bind:value={signupForm.answer} placeholder={selectedEvent.question || '报名备注'}></textarea>
             <button disabled={selectedEvent.status !== '开放报名' || seatsLeft <= 0}>提交报名</button>
           </form>
+          {#if mySignups.length > 0}
+            <div class="mySignups">
+              <h3>我的报名</h3>
+              {#each mySignups as item}
+                {@const event = events.find((e) => e.id === item.eventId)}
+                <article class="mySignup-card">
+                  <strong>{event?.book || '未知活动'}</strong>
+                  <span>{event?.host} · {event?.time?.replace('T', ' ')}</span>
+                  <span>报名时间：{item.createdAt}</span>
+                  <div class="mySignup-status">
+                    <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
+                      {item.checkedIn ? '已到场' : '未到场'}
+                    </span>
+                    {#if item.checkedIn && item.checkedInAt}
+                      <span class="checkin-time">签到时间：{item.checkedInAt}</span>
+                    {/if}
+                  </div>
+                  <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                </article>
+              {/each}
+            </div>
+          {/if}
         {/if}
       </section>
     {:else}
@@ -127,15 +163,33 @@
         <section class="panel">
           <div class="eventHead">
             <h2>报名名单</h2>
-            {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
+            <div class="eventHead-actions">
+              <span class="checkin-summary">{selectedCheckedInCount}/{selectedSignups.length} 已签到</span>
+              {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
+            </div>
           </div>
           <div class="signupList">
             {#each selectedSignups as item}
               <article>
-                <strong>{item.name}</strong>
-                <span>{item.phone} · {item.createdAt}</span>
-                <p>{item.answer}</p>
-                <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                <div class="signupRow">
+                  <div>
+                    <strong>{item.name}</strong>
+                    <span>{item.phone} · {item.createdAt}</span>
+                    <p>{item.answer}</p>
+                    {#if item.checkedIn && item.checkedInAt}
+                      <span class="checkin-time">签到时间：{item.checkedInAt}</span>
+                    {/if}
+                  </div>
+                  <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
+                    {item.checkedIn ? '已到场' : '未到场'}
+                  </span>
+                </div>
+                <div class="signupActions">
+                  <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
+                    {item.checkedIn ? '标记未到场' : '标记已到场'}
+                  </button>
+                  <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                </div>
               </article>
             {/each}
           </div>
@@ -158,7 +212,7 @@ h2 { margin: 0 0 16px; display: flex; align-items: center; gap: 8px; font-size: 
 .mode { display: flex; gap: 8px; }
 .mode button { background: rgb(255 255 255 / .12); border: 1px solid rgb(255 255 255 / .2); }
 .mode .active { background: #fff; color: #2b2b25; }
-.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
 .metrics article, .panel { background: #fff; border: 1px solid #ded7c9; border-radius: 8px; padding: 18px; box-shadow: 0 10px 28px rgb(49 43 31 / .07); }
 .metrics article { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
 .metrics strong { font-size: 26px; }
@@ -182,5 +236,19 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .signupList article { border: 1px solid #e3dacb; border-radius: 8px; padding: 14px; background: #fffaf2; }
 .csv { display: grid; gap: 8px; margin-top: 14px; color: #4a4439; }
 .csv textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid { grid-template-columns: 1fr; } }
+.checkin-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.checkin-badge.checked { background: #e6f4ea; color: #1e7e34; }
+.checkin-badge.unchecked { background: #fce4e4; color: #a33; }
+.checkin-summary { font-size: 14px; color: #686258; white-space: nowrap; }
+.eventHead-actions { display: flex; align-items: center; gap: 10px; }
+.signupRow { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.signupActions { display: flex; gap: 8px; margin-top: 10px; }
+.checkin-btn.checkin-active { background: #e6f4ea; color: #1e7e34; border: 1px solid #b7dfbf; }
+.mySignups { margin-top: 18px; }
+.mySignups h3 { margin: 0 0 12px; font-size: 16px; }
+.mySignup-card { border: 1px solid #e3dacb; border-radius: 8px; padding: 14px; background: #fffaf2; margin-bottom: 10px; }
+.mySignup-status { margin-top: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.checkin-time { font-size: 13px; color: #686258; }
+.mySignup-card .cancel-btn { margin-top: 10px; }
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid { grid-template-columns: 1fr; } .signupRow { flex-direction: column; } }
 </style>
