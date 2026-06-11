@@ -131,13 +131,14 @@
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
     if (editingEventId) {
       const newLimit = Number(eventForm.limit || 0);
-      events = events.map((e) => e.id === editingEventId ? { ...eventForm, id: editingEventId, limit: newLimit } : e);
       const eventId = editingEventId;
       const prevLimit = editingEventPrevLimit;
+      const updatedEvents = events.map((e) => e.id === eventId ? { ...eventForm, id: eventId, limit: newLimit } : e);
+      events = updatedEvents;
       editingEventId = '';
       editingEventPrevLimit = 0;
       if (newLimit > prevLimit) {
-        setTimeout(() => promoteFromWaitlist(eventId), 0);
+        promoteFromWaitlist(eventId, updatedEvents);
       }
     } else {
       const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
@@ -215,8 +216,8 @@
     }
   }
 
-  function promoteFromWaitlist(eventId) {
-    const event = events.find((e) => e.id === eventId);
+  function promoteFromWaitlist(eventId, eventSource = events) {
+    const event = eventSource.find((e) => e.id === eventId);
     if (!event) return;
 
     const eventSignups = signups.filter((item) => item.eventId === eventId);
