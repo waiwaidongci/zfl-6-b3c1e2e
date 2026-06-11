@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X } from 'lucide-svelte';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -8,24 +8,36 @@
     return date.toISOString().slice(0, 10);
   };
 
-  const seedEvents = [
-    { id: crypto.randomUUID(), book: '秋园', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名' },
-    { id: crypto.randomUUID(), book: '索拉里斯星', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名' }
+  const seedBooks = [
+    { id: crypto.randomUUID(), title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
+    { id: crypto.randomUUID(), title: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', question: '是否读完全文？' }
   ];
 
+  const seedEvents = [
+    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名' },
+    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名' }
+  ];
+
+  let books = seedBooks;
   let events = seedEvents;
   let signups = [];
   let selectedId = seedEvents[0].id;
   let mode = '用户端';
-  let eventForm = { book: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let adminTab = '活动管理';
+  let selectedBookId = '';
+  let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  let bookForm = { title: '', author: '', description: '', question: '' };
+  let editingBookId = '';
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
   let hydrated = false;
 
   onMount(() => {
+    const storedBooks = localStorage.getItem('zfl-6-books');
     const storedEvents = localStorage.getItem('zfl-6-events');
     const storedSignups = localStorage.getItem('zfl-6-signups');
     const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
+    if (storedBooks) books = JSON.parse(storedBooks);
     if (storedEvents) events = JSON.parse(storedEvents);
     if (storedSignups) signups = JSON.parse(storedSignups);
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
@@ -34,6 +46,7 @@
   });
 
   $: if (hydrated) {
+    localStorage.setItem('zfl-6-books', JSON.stringify(books));
     localStorage.setItem('zfl-6-events', JSON.stringify(events));
     localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
     localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
@@ -46,12 +59,67 @@
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedSignups.length) : 0;
   $: csv = ['活动,姓名,手机,回答,报名时间,签到状态,签到时间', ...selectedSignups.map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}"`)].join('\n');
 
+  $: if (selectedBookId) {
+    const book = books.find((b) => b.id === selectedBookId);
+    if (book) {
+      eventForm.book = book.title;
+      eventForm.author = book.author;
+      eventForm.description = book.description;
+      eventForm.question = book.question;
+    }
+  } else {
+    eventForm.author = '';
+    eventForm.description = '';
+  }
+
+  function selectBookForEvent(bookId) {
+    selectedBookId = bookId;
+  }
+
+  function clearBookSelection() {
+    selectedBookId = '';
+    eventForm.book = '';
+    eventForm.author = '';
+    eventForm.description = '';
+    eventForm.question = '';
+  }
+
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
     const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
     events = [event, ...events];
     selectedId = event.id;
-    eventForm = { book: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+    clearBookSelection();
+    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
+  }
+
+  function createBook() {
+    if (!bookForm.title.trim() || !bookForm.author.trim()) return;
+    if (editingBookId) {
+      books = books.map((b) => b.id === editingBookId ? { ...bookForm, id: editingBookId } : b);
+      editingBookId = '';
+    } else {
+      const book = { id: crypto.randomUUID(), ...bookForm };
+      books = [book, ...books];
+    }
+    bookForm = { title: '', author: '', description: '', question: '' };
+  }
+
+  function editBook(book) {
+    bookForm = { title: book.title, author: book.author, description: book.description, question: book.question };
+    editingBookId = book.id;
+  }
+
+  function deleteBook(id) {
+    books = books.filter((b) => b.id !== id);
+    if (selectedBookId === id) {
+      clearBookSelection();
+    }
+  }
+
+  function cancelEditBook() {
+    bookForm = { title: '', author: '', description: '', question: '' };
+    editingBookId = '';
   }
 
   function signup() {
@@ -111,10 +179,19 @@
           <div class="eventHead">
             <div>
               <h2>{selectedEvent.book}</h2>
+              {#if selectedEvent.author}
+                <p class="author">作者：{selectedEvent.author}</p>
+              {/if}
               <p>{selectedEvent.host} · {selectedEvent.time.replace('T', ' ')} · {selectedEvent.status}</p>
             </div>
             <strong>{seatsLeft}个余位</strong>
           </div>
+          {#if selectedEvent.description}
+            <div class="bookDescription">
+              <h3>书目简介</h3>
+              <p>{selectedEvent.description}</p>
+            </div>
+          {/if}
           <form on:submit|preventDefault={signup}>
             <input bind:value={signupForm.name} placeholder="姓名" />
             <input bind:value={signupForm.phone} placeholder="联系方式" />
@@ -146,57 +223,130 @@
         {/if}
       </section>
     {:else}
-      <section class="adminGrid">
-        <form class="panel" on:submit|preventDefault={createEvent}>
-          <h2><CalendarPlus size={18} />创建活动</h2>
-          <input bind:value={eventForm.book} placeholder="书名" />
-          <input bind:value={eventForm.host} placeholder="主讲人" />
-          <input bind:value={eventForm.time} type="datetime-local" />
-          <input bind:value={eventForm.limit} type="number" min="1" placeholder="人数上限" />
-          <input bind:value={eventForm.question} placeholder="报名问题" />
-          <select bind:value={eventForm.status}>
-            <option>开放报名</option>
-            <option>已关闭</option>
-          </select>
-          <button>保存活动</button>
-        </form>
+      <div class="adminLayout">
+        <div class="adminTabs">
+          <button class:active={adminTab === '活动管理'} on:click={() => adminTab = '活动管理'}>活动管理</button>
+          <button class:active={adminTab === '书目库'} on:click={() => adminTab = '书目库'}>书目库</button>
+        </div>
 
-        <section class="panel">
-          <div class="eventHead">
-            <h2>报名名单</h2>
-            <div class="eventHead-actions">
-              <span class="checkin-summary">{selectedCheckedInCount}/{selectedSignups.length} 已签到</span>
-              {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
-            </div>
-          </div>
-          <div class="signupList">
-            {#each selectedSignups as item}
-              <article>
-                <div class="signupRow">
-                  <div>
-                    <strong>{item.name}</strong>
-                    <span>{item.phone} · {item.createdAt}</span>
-                    <p>{item.answer}</p>
-                    {#if item.checkedIn && item.checkedInAt}
-                      <span class="checkin-time">签到时间：{item.checkedInAt}</span>
+        {#if adminTab === '活动管理'}
+          <section class="adminGrid">
+            <div class="panel">
+              <form on:submit|preventDefault={createEvent}>
+                <h2><CalendarPlus size={18} />创建活动</h2>
+
+                <div class="bookSelector">
+                  <label for="bookSelector">从书目库选择</label>
+                  <div class="bookSelectorRow">
+                    <select id="bookSelector" bind:value={selectedBookId} on:change={(e) => selectBookForEvent(e.target.value)}>
+                      <option value="">手动输入书名</option>
+                      {#each books as book}
+                        <option value={book.id}>{book.title} · {book.author}</option>
+                      {/each}
+                    </select>
+                    {#if selectedBookId}
+                      <button type="button" class="ghost clearBtn" on:click={clearBookSelection} title="清除选择">
+                        <X size={16} />
+                      </button>
                     {/if}
                   </div>
-                  <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
-                    {item.checkedIn ? '已到场' : '未到场'}
-                  </span>
                 </div>
-                <div class="signupActions">
-                  <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
-                    {item.checkedIn ? '标记未到场' : '标记已到场'}
-                  </button>
-                  <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
+
+                <input bind:value={eventForm.book} placeholder="书名" />
+                <input bind:value={eventForm.author} placeholder="作者" />
+                <textarea bind:value={eventForm.description} placeholder="书目简介"></textarea>
+                <input bind:value={eventForm.host} placeholder="主讲人" />
+                <input bind:value={eventForm.time} type="datetime-local" />
+                <input bind:value={eventForm.limit} type="number" min="1" placeholder="人数上限" />
+                <input bind:value={eventForm.question} placeholder="报名问题" />
+                <select bind:value={eventForm.status}>
+                  <option>开放报名</option>
+                  <option>已关闭</option>
+                </select>
+                <button>保存活动</button>
+              </form>
+            </div>
+
+            <section class="panel">
+              <div class="eventHead">
+                <h2>报名名单</h2>
+                <div class="eventHead-actions">
+                  <span class="checkin-summary">{selectedCheckedInCount}/{selectedSignups.length} 已签到</span>
+                  {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
                 </div>
-              </article>
-            {/each}
-          </div>
-          <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
-        </section>
-      </section>
+              </div>
+              <div class="signupList">
+                {#each selectedSignups as item}
+                  <article>
+                    <div class="signupRow">
+                      <div>
+                        <strong>{item.name}</strong>
+                        <span>{item.phone} · {item.createdAt}</span>
+                        <p>{item.answer}</p>
+                        {#if item.checkedIn && item.checkedInAt}
+                          <span class="checkin-time">签到时间：{item.checkedInAt}</span>
+                        {/if}
+                      </div>
+                      <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
+                        {item.checkedIn ? '已到场' : '未到场'}
+                      </span>
+                    </div>
+                    <div class="signupActions">
+                      <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
+                        {item.checkedIn ? '标记未到场' : '标记已到场'}
+                      </button>
+                      <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
+                    </div>
+                  </article>
+                {/each}
+              </div>
+              <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
+            </section>
+          </section>
+        {:else}
+          <section class="bookLibrary">
+            <form class="panel bookForm" on:submit|preventDefault={createBook}>
+              <h2><BookPlus size={18} />{editingBookId ? '编辑书籍' : '添加书籍'}</h2>
+              <input bind:value={bookForm.title} placeholder="书名" />
+              <input bind:value={bookForm.author} placeholder="作者" />
+              <textarea bind:value={bookForm.description} placeholder="书目简介"></textarea>
+              <input bind:value={bookForm.question} placeholder="默认讨论问题" />
+              <div class="formActions">
+                <button>{editingBookId ? '保存修改' : '添加到书目库'}</button>
+                {#if editingBookId}
+                  <button type="button" class="ghost" on:click={cancelEditBook}>取消</button>
+                {/if}
+              </div>
+            </form>
+
+            <section class="panel bookList">
+              <h2><LibraryBig size={18} />书目库 ({books.length})</h2>
+              {#if books.length === 0}
+                <p class="empty">书库为空，添加第一本书吧</p>
+              {:else}
+                {#each books as book}
+                  <article class="bookCard">
+                    <div class="bookInfo">
+                      <strong>{book.title}</strong>
+                      <span class="author">作者：{book.author}</span>
+                      {#if book.description}
+                        <p class="desc">{book.description}</p>
+                      {/if}
+                      {#if book.question}
+                        <span class="question">默认问题：{book.question}</span>
+                      {/if}
+                    </div>
+                    <div class="bookActions">
+                      <button class="ghost" on:click={() => editBook(book)}>编辑</button>
+                      <button class="ghost danger" on:click={() => deleteBook(book.id)}>删除</button>
+                    </div>
+                  </article>
+                {/each}
+              {/if}
+            </section>
+          </section>
+        {/if}
+      </div>
     {/if}
   </section>
 </main>
@@ -251,5 +401,32 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .mySignup-status { margin-top: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .checkin-time { font-size: 13px; color: #686258; }
 .mySignup-card .cancel-btn { margin-top: 10px; }
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid { grid-template-columns: 1fr; } .signupRow { flex-direction: column; } }
+.author { font-size: 14px; color: #6b6459; margin: 4px 0; }
+.bookDescription { background: #fff8ee; border: 1px solid #e8ddc8; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.bookDescription h3 { margin: 0 0 8px; font-size: 15px; color: #4b4435; }
+.bookDescription p { margin: 0; line-height: 1.6; }
+.adminLayout { display: grid; gap: 16px; }
+.adminTabs { display: flex; gap: 8px; }
+.adminTabs button { background: #e8e0ce; color: #4b4435; }
+.adminTabs .active { background: #4b4435; color: #fff; }
+.bookSelector { margin-bottom: 8px; }
+.bookSelector label { display: block; font-size: 13px; color: #6b6459; margin-bottom: 6px; }
+.bookSelectorRow { display: flex; gap: 8px; align-items: center; }
+.bookSelectorRow select { flex: 1; }
+.clearBtn { padding: 8px 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.formActions { display: flex; gap: 8px; }
+.formActions button { flex: 1; }
+.bookLibrary { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+.bookForm textarea { min-height: 80px; }
+.bookCard { display: flex; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid #e3dacb; border-radius: 8px; background: #fffaf2; margin-bottom: 10px; }
+.bookInfo { flex: 1; }
+.bookInfo strong { display: block; font-size: 16px; margin-bottom: 4px; }
+.bookInfo .author { font-size: 14px; color: #6b6459; margin-bottom: 6px; }
+.bookInfo .desc { font-size: 14px; color: #4a4439; margin: 8px 0; line-height: 1.5; }
+.bookInfo .question { display: inline-block; font-size: 13px; color: #7b6b4e; background: #efe7d8; padding: 4px 10px; border-radius: 12px; margin-top: 4px; }
+.bookActions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.bookActions button { padding: 6px 12px; font-size: 13px; }
+.bookActions .danger { background: #fce4e4; color: #a33; }
+.empty { text-align: center; color: #999; padding: 40px 20px; }
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
 </style>
