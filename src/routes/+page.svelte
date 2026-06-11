@@ -29,6 +29,7 @@
   let bookForm = { title: '', author: '', description: '', question: '' };
   let editingBookId = '';
   let editingEventId = '';
+  let editingEventPrevLimit = 0;
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
   let hydrated = false;
@@ -80,7 +81,8 @@
   }).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.createdAt}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
 
   let lastEventLimits = {};
-  $: if (hydrated && events.length > 0) {
+  $: eventLimits = events.map((e) => `${e.id}:${e.limit}`).join('|');
+  $: if (hydrated && eventLimits) {
     events.forEach((event) => {
       const currentLimit = Number(event.limit);
       if (lastEventLimits[event.id] !== undefined && currentLimit > lastEventLimits[event.id]) {
@@ -128,8 +130,15 @@
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
     if (editingEventId) {
-      events = events.map((e) => e.id === editingEventId ? { ...eventForm, id: editingEventId, limit: Number(eventForm.limit || 0) } : e);
+      const newLimit = Number(eventForm.limit || 0);
+      events = events.map((e) => e.id === editingEventId ? { ...eventForm, id: editingEventId, limit: newLimit } : e);
+      const eventId = editingEventId;
+      const prevLimit = editingEventPrevLimit;
       editingEventId = '';
+      editingEventPrevLimit = 0;
+      if (newLimit > prevLimit) {
+        setTimeout(() => promoteFromWaitlist(eventId), 0);
+      }
     } else {
       const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
       events = [event, ...events];
@@ -141,12 +150,14 @@
 
   function editEvent(event) {
     editingEventId = event.id;
+    editingEventPrevLimit = Number(event.limit);
     selectedBookId = '';
     eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status };
   }
 
   function cancelEditEvent() {
     editingEventId = '';
+    editingEventPrevLimit = 0;
     clearBookSelection();
     eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名' };
   }
