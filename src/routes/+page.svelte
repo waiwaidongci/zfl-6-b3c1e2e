@@ -34,6 +34,7 @@
   let viewMode = '列表';
   let calYear = new Date().getFullYear();
   let calMonth = new Date().getMonth();
+  let activeDate = '';
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -140,16 +141,22 @@
   function prevMonth() {
     if (calMonth === 0) { calMonth = 11; calYear--; }
     else calMonth--;
+    activeDate = '';
   }
   function nextMonth() {
     if (calMonth === 11) { calMonth = 0; calYear++; }
     else calMonth++;
+    activeDate = '';
   }
-  function selectDayEvent(day) {
+  function toggleDay(day) {
     const key = dateKey(day);
     const dayEvents = eventsByDate[key];
-    if (dayEvents && dayEvents.length > 0) {
+    if (!dayEvents || dayEvents.length === 0) return;
+    if (dayEvents.length === 1) {
       selectedId = dayEvents[0].id;
+      activeDate = '';
+    } else {
+      activeDate = activeDate === key ? '' : key;
     }
   }
 
@@ -233,7 +240,8 @@
               {@const dayEvents = eventsByDate[key] || []}
               {@const isToday = todayStr === key}
               {@const isSelected = dayEvents.some(e => e.id === selectedId)}
-              <button class="calDay" class:calToday={isToday} class:calSelected={isSelected} class:calHasEvents={dayEvents.length > 0} on:click={() => selectDayEvent(day)} disabled={dayEvents.length === 0}>
+              {@const isExpanded = activeDate === key}
+              <button class="calDay" class:calToday={isToday} class:calSelected={isSelected} class:calHasEvents={dayEvents.length > 0} class:calExpanded={isExpanded} on:click={() => toggleDay(day)} disabled={dayEvents.length === 0}>
                 <span class="calDayNum">{day}</span>
                 {#if dayEvents.length > 0}
                   <span class="calBadge">{dayEvents.length}</span>
@@ -242,6 +250,22 @@
               </button>
             {/each}
           </div>
+          {#if activeDate && eventsByDate[activeDate]}
+            <div class="calExpandedPanel">
+              <div class="calExpandedHead">
+                <strong>{activeDate} · 当日活动 ({eventsByDate[activeDate].length})</strong>
+                <button class="calClose" on:click={() => activeDate = ''}>×</button>
+              </div>
+              <div class="calExpandedList">
+                {#each eventsByDate[activeDate] as event}
+                  <button class="calEventItem" class:event-active={selectedId === event.id} on:click={() => { selectedId = event.id; activeDate = ''; }}>
+                    <strong>{event.book}</strong>
+                    <span>{event.host} · {event.time.replace('T', ' ')} · {event.status}</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </aside>
@@ -522,5 +546,17 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .calSelected { border-color: #4b4435; background: #e2d9c6; }
 .calBadge { display: inline-block; background: #7b6b4e; color: #fff; font-size: 10px; line-height: 1; border-radius: 8px; padding: 2px 5px; margin-top: 3px; }
 .calBookNames { font-size: 10px; color: #6b6459; text-align: center; line-height: 1.25; margin-top: 2px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+.calExpanded { border-color: #4b4435; background: #d8ccb2; }
+.calExpandedPanel { margin-top: 12px; background: #fff8ee; border: 1px solid #e0d4bc; border-radius: 8px; padding: 12px; }
+.calExpandedHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.calExpandedHead strong { font-size: 14px; color: #4b4435; }
+.calClose { padding: 0 8px; background: transparent; color: #8a7f6a; font-size: 18px; line-height: 1; }
+.calClose:hover { background: #e8ddc8; color: #2a2822; }
+.calExpandedList { display: flex; flex-direction: column; gap: 6px; }
+.calEventItem { width: 100%; text-align: left; background: #fff; border: 1px solid #e3dacb; border-radius: 6px; padding: 8px 10px; }
+.calEventItem strong, .calEventItem span { display: block; }
+.calEventItem strong { font-size: 14px; }
+.calEventItem span { font-size: 12px; color: #6b6459; margin-top: 2px; }
+.calEventItem.event-active { border-color: #7b6b4e; background: #efe7d8; }
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead { align-items: start; flex-direction: column; } .metrics, .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } }
 </style>
