@@ -540,11 +540,66 @@
   }
 
   function parseCsv(text) {
-    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-    if (lines.length === 0) return { headers: [], rows: [] };
-    const headers = parseCsvLine(lines[0]).map((h) => h.trim());
-    const rows = lines.slice(1).map((line) => parseCsvLine(line).map((c) => c.trim()));
-    return { headers, rows };
+    const rows = [];
+    const rowLineNumbers = [];
+    let currentRow = [];
+    let currentField = '';
+    let inQuotes = false;
+    let currentLineNum = 1;
+    let i = 0;
+
+    while (i < text.length) {
+      const char = text[i];
+      const nextChar = text[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          currentField += '"';
+          i += 2;
+        } else {
+          inQuotes = !inQuotes;
+          i++;
+        }
+      } else if (char === ',' && !inQuotes) {
+        currentRow.push(currentField);
+        currentField = '';
+        i++;
+      } else if ((char === '\n' || char === '\r') && !inQuotes) {
+        currentRow.push(currentField);
+        if (currentRow.some((cell) => cell.trim().length > 0)) {
+          rows.push(currentRow);
+          rowLineNumbers.push(currentLineNum);
+        }
+        currentRow = [];
+        currentField = '';
+        currentLineNum++;
+        if (char === '\r' && nextChar === '\n') {
+          i += 2;
+        } else {
+          i++;
+        }
+      } else {
+        if (char === '\n' || char === '\r') {
+          currentLineNum++;
+        }
+        currentField += char;
+        i++;
+      }
+    }
+
+    if (currentField.length > 0 || currentRow.length > 0) {
+      currentRow.push(currentField);
+      if (currentRow.some((cell) => cell.trim().length > 0)) {
+        rows.push(currentRow);
+        rowLineNumbers.push(currentLineNum);
+      }
+    }
+
+    if (rows.length === 0) return { headers: [], rows: [], rowLineNumbers: [] };
+    const headers = rows[0].map((h) => h.trim());
+    const dataRows = rows.slice(1).map((row) => row.map((c) => c.trim()));
+    const dataRowLineNumbers = rowLineNumbers.slice(1);
+    return { headers, rows: dataRows, rowLineNumbers: dataRowLineNumbers };
   }
 
   function previewImport() {
@@ -555,7 +610,7 @@
       return;
     }
 
-    const { headers, rows } = parseCsv(importCsvText);
+    const { headers, rows, rowLineNumbers } = parseCsv(importCsvText);
     const errors = [];
     const eventsToAdd = [];
     const signupsToAdd = [];
@@ -581,7 +636,7 @@
     events.forEach((e) => { eventBookCache[e.book] = e; });
 
     rows.forEach((row, idx) => {
-      const lineNum = idx + 2;
+      const lineNum = rowLineNumbers[idx] || idx + 2;
       const bookName = row[headerMap['活动']] || '';
       const name = row[headerMap['姓名']] || '';
       const phone = row[headerMap['手机']] || '';
@@ -674,16 +729,22 @@
       });
     });
 
-    const stats = {
-      eventCount: eventsToAdd.length,
-      signupCount: signupsToAdd.length,
-      duplicateCount: duplicates.length,
-      errorCount: errors.length
-    };
-
     importPreview = { events: eventsToAdd, signups: signupsToAdd, duplicates };
     importErrors = errors;
-    importStats = stats;
+
+    importStats = {
+      eventCount: importPreview.events.length,
+      signupCount: importPreview.signups.length,
+      duplicateCount: importPreview.duplicates.length,
+      errorCount: importErrors.length
+    };
+
+    if (importStats.eventCount !== eventsToAdd.length ||
+        importStats.signupCount !== signupsToAdd.length ||
+        importStats.duplicateCount !== duplicates.length ||
+        importStats.errorCount !== errors.length) {
+      console.warn('Import stats validation mismatch detected');
+    }
   }
 
   function confirmImport() {
