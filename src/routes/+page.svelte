@@ -176,6 +176,12 @@
 
   $: allReaderStats = getAllReadersStats(readers, signups, events);
   $: allAvailableTags = getAllTags(readers);
+  $: if (readerSelectedTags.length > 0) {
+    const validTags = readerSelectedTags.filter((t) => allAvailableTags.includes(t));
+    if (validTags.length !== readerSelectedTags.length) {
+      readerSelectedTags = validTags;
+    }
+  }
   $: sortedReaderStats = sortReadersByActivity(allReaderStats, readerSortBy);
   $: tagFilteredReaderStats = filterReaderStatsByTags(sortedReaderStats, readerSelectedTags);
   $: filteredReaderStats = tagFilteredReaderStats.filter((item) => {
