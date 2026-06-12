@@ -49,6 +49,7 @@
     getCalendarData,
     handleCalendarDayToggle
   } from '$lib/utils/eventActions.js';
+  import { promoteFromWaitlist } from '$lib/utils/storeUtils.js';
   import {
     OPERATION_TYPES,
     OPERATION_LABELS,
