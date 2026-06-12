@@ -215,6 +215,29 @@ assert(groupsSummary.waitlist >= 1, 'waitlist count >= 1');
 assert(groupsSummary.checkedIn >= 1, 'checkedIn count >= 1');
 assert(groupsSummary.promoted >= 1, 'promoted count >= 1');
 
+console.log('\n--- getSignupGroupsSummary (筛选后口径验证) ---');
+const e1OnlyStats = stats.filter((s) => s.eventId === 'e1');
+const e1Groups = getSignupGroupsSummary(e1OnlyStats, mockSignups);
+assertEqual(e1Groups.total, 4, '筛选e1后 total=4 (仅e1的4条报名)');
+assertEqual(e1Groups.regular, 3, '筛选e1后 regular=3');
+assertEqual(e1Groups.waitlist, 1, '筛选e1后 waitlist=1');
+assertEqual(e1Groups.checkedIn, 2, '筛选e1后 checkedIn=2');
+assertEqual(e1Groups.promoted, 1, '筛选e1后 promoted=1');
+assertEqual(e1Groups.pending, 0, '筛选e1后 pending=0 (e1不需要审核)');
+assertEqual(e1Groups.rejected, 0, '筛选e1后 rejected=0');
+
+const s1Stats = stats.filter((s) => s.seriesId === 's1');
+const s1Groups = getSignupGroupsSummary(s1Stats, mockSignups);
+assertEqual(s1Groups.total, 5, '筛选s1系列后 total=5 (e2的3条 + e3的2条)');
+assertEqual(s1Groups.pending, 1, '筛选s1系列后 pending=1 (e2的待审核)');
+assertEqual(s1Groups.rejected, 1, '筛选s1系列后 rejected=1 (e2的已拒绝)');
+
+const nonexistentStats = stats.filter((s) => s.eventId === 'nonexistent');
+const nonexistentGroups = getSignupGroupsSummary(nonexistentStats, mockSignups);
+assertEqual(nonexistentGroups.total, 0, '空筛选 total=0');
+assertEqual(nonexistentGroups.regular, 0, '空筛选 regular=0');
+assertEqual(nonexistentGroups.pending, 0, '空筛选 pending=0');
+
 console.log('\n--- getEventsByStatusBucket ---');
 const statusBucket = getEventsByStatusBucket(stats);
 assertEqual(statusBucket.open + statusBucket.closed, 4, 'open + closed = total events');
@@ -232,6 +255,8 @@ assert(dashboard.anomalies !== undefined, 'has anomalies');
 assert(dashboard.groupsSummary !== undefined, 'has groupsSummary');
 assert(dashboard.statusBucket !== undefined, 'has statusBucket');
 assertEqual(dashboard.filteredEvents.length, mockEvents.length, 'no filters: all events included');
+assertEqual(dashboard.groupsSummary.total, mockSignups.length, 'no filters: groups total matches all signups');
+assertEqual(dashboard.groupsSummary.total, dashboard.aggregate.totalSignups, 'groupsSummary.total 与 aggregate.totalSignups 口径一致');
 
 const dashboardFiltered = buildOpsDashboardData(mockEvents, mockSignups, mockSeries, {
   dateFrom: '2025-07-01',
@@ -240,11 +265,28 @@ const dashboardFiltered = buildOpsDashboardData(mockEvents, mockSignups, mockSer
 });
 assert(dashboardFiltered.filteredEvents.length < mockEvents.length, 'filtered events < total events');
 assert(dashboardFiltered.timeTrend.length >= 1, 'week granularity works');
+assert(
+  dashboardFiltered.groupsSummary.total < mockSignups.length,
+  '筛选后 groupsSummary.total 应小于全量报名数'
+);
+assertEqual(
+  dashboardFiltered.groupsSummary.total,
+  dashboardFiltered.aggregate.totalSignups,
+  '筛选后 groupsSummary.total 与 aggregate.totalSignups 口径一致'
+);
+
+const dashboardSeriesOnly = buildOpsDashboardData(mockEvents, mockSignups, mockSeries, { seriesId: 's1' });
+assertEqual(dashboardSeriesOnly.filteredEvents.length, 2, '按系列s1筛选: 2场活动');
+assertEqual(dashboardSeriesOnly.groupsSummary.total, 5, '按系列s1筛选: 5条报名 (e2+e3)');
+assertEqual(dashboardSeriesOnly.groupsSummary.pending, 1, '按系列s1筛选: pending=1');
+assertEqual(dashboardSeriesOnly.groupsSummary.total, dashboardSeriesOnly.aggregate.totalSignups, '系列筛选后 totalSignups 口径一致');
 
 const dashboardEmpty = buildOpsDashboardData([], [], [], {});
 assertEqual(dashboardEmpty.aggregate.totalEvents, 0, 'empty dashboard: totalEvents = 0');
 assertEqual(dashboardEmpty.aggregate.avgConversionRate, 0, 'empty dashboard: avgConversionRate = 0');
 assertEqual(dashboardEmpty.anomalies.length, 0, 'empty dashboard: no anomalies');
+assertEqual(dashboardEmpty.groupsSummary.total, 0, 'empty dashboard: groupsSummary.total = 0');
+assertEqual(dashboardEmpty.groupsSummary.regular, 0, 'empty dashboard: groupsSummary.regular = 0');
 
 console.log('\n=== 事件操作函数测试 (storeUtils) ===\n');
 

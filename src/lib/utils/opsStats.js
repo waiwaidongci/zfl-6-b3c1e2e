@@ -291,15 +291,17 @@ export function getAnomalies(eventStatsList) {
 }
 
 export function getSignupGroupsSummary(eventStatsList, signups) {
+  const filteredEventIds = new Set(eventStatsList.map((s) => s.eventId));
+  const filteredSignups = signups.filter((s) => filteredEventIds.has(s.eventId));
   const groups = {
-    total: signups.length,
-    pending: signups.filter((s) => s.reviewStatus === '待审核').length,
-    approved: signups.filter((s) => s.reviewStatus === '已通过').length,
-    rejected: signups.filter((s) => s.reviewStatus === '已拒绝').length,
-    regular: signups.filter((s) => s.reviewStatus === '已通过' && s.status === '正式').length,
-    waitlist: signups.filter((s) => s.reviewStatus === '已通过' && s.status === '候补').length,
-    checkedIn: signups.filter((s) => s.checkedIn).length,
-    promoted: signups.filter((s) => s._wasWaitlisted).length
+    total: filteredSignups.length,
+    pending: filteredSignups.filter((s) => s.reviewStatus === '待审核').length,
+    approved: filteredSignups.filter((s) => s.reviewStatus === '已通过').length,
+    rejected: filteredSignups.filter((s) => s.reviewStatus === '已拒绝').length,
+    regular: filteredSignups.filter((s) => s.reviewStatus === '已通过' && s.status === '正式').length,
+    waitlist: filteredSignups.filter((s) => s.reviewStatus === '已通过' && s.status === '候补').length,
+    checkedIn: filteredSignups.filter((s) => s.checkedIn).length,
+    promoted: filteredSignups.filter((s) => s._wasWaitlisted).length
   };
   return groups;
 }
