@@ -1,6 +1,8 @@
 <script>
-  import { BarChart3, AlertTriangle, Filter, TrendingUp, Users, UserCheck, Clock, ArrowRight, Layers, Calendar, PieChart, ListOrdered, ChevronDown, ChevronUp } from 'lucide-svelte';
-  import { getEventStats, getAggregateStats, filterEvents, getAnomalies, getSeriesStats, getTimeTrend, getSignupGroupsSummary, getEventsByStatusBucket, buildOpsDashboardData } from '$lib/utils/opsStats.js';
+  import { onMount } from 'svelte';
+  import { BarChart3, AlertTriangle, Filter, TrendingUp, Users, UserCheck, Clock, ArrowRight, Layers, Calendar, PieChart, ListOrdered, ChevronDown, ChevronUp, Save, FolderOpen, Edit3, Trash2, Check, X, Bookmark } from 'lucide-svelte';
+  import { getEventStats, getAggregateStats, filterEvents, getAnomalies, getSeriesStats, getTimeTrend, getSignupGroupsSummary, getEventsByStatusBucket, buildOpsDashboardData, buildFiltersFromView } from '$lib/utils/opsStats.js';
+  import { readViews, createView, deleteView, renameView } from '$lib/utils/storeUtils.js';
 
   let {
     events = [],
@@ -24,8 +26,110 @@
     detail: true
   });
 
+  let views = $state([]);
+  let selectedViewId = $state('');
+  let showSaveDialog = $state(false);
+  let newViewName = $state('');
+  let editingViewId = $state('');
+  let editingViewName = $state('');
+  let showViewMenu = $state(false);
+
+  onMount(() => {
+    views = readViews();
+  });
+
+  function refreshViews() {
+    views = readViews();
+  }
+
   function toggleSection(key) {
     expandedSections[key] = !expandedSections[key];
+  }
+
+  function applyView(view) {
+    if (!view) return;
+    filterDateFrom = view.filters?.dateFrom || '';
+    filterDateTo = view.filters?.dateTo || '';
+    filterSeriesId = view.filters?.seriesId || '';
+    filterStatus = view.filters?.status || '';
+    granularity = view.granularity || 'month';
+    if (view.expandedSections) {
+      expandedSections = {
+        overview: view.expandedSections.overview ?? true,
+        groups: view.expandedSections.groups ?? true,
+        anomalies: view.expandedSections.anomalies ?? true,
+        series: view.expandedSections.series ?? false,
+        trend: view.expandedSections.trend ?? false,
+        detail: view.expandedSections.detail ?? true
+      };
+    }
+    selectedViewId = view.id;
+    showViewMenu = false;
+  }
+
+  function openSaveDialog() {
+    newViewName = '';
+    showSaveDialog = true;
+  }
+
+  function closeSaveDialog() {
+    showSaveDialog = false;
+    newViewName = '';
+  }
+
+  function handleSaveView() {
+    if (!newViewName.trim()) return;
+    createView({
+      name: newViewName.trim(),
+      filters: {
+        dateFrom: filterDateFrom,
+        dateTo: filterDateTo,
+        seriesId: filterSeriesId,
+        status: filterStatus
+      },
+      granularity,
+      expandedSections
+    });
+    refreshViews();
+    closeSaveDialog();
+  }
+
+  function handleDeleteView(viewId, event) {
+    event.stopPropagation();
+    const view = views.find((v) => v.id === viewId);
+    if (!view) return;
+    if (!confirm(`确定要删除视图"${view.name}"吗？`)) return;
+    deleteView(viewId);
+    if (selectedViewId === viewId) {
+      selectedViewId = '';
+    }
+    refreshViews();
+  }
+
+  function startRename(view, event) {
+    event.stopPropagation();
+    editingViewId = view.id;
+    editingViewName = view.name;
+  }
+
+  function cancelRename() {
+    editingViewId = '';
+    editingViewName = '';
+  }
+
+  function confirmRename(viewId) {
+    if (!editingViewName.trim()) return;
+    renameView(viewId, editingViewName.trim());
+    refreshViews();
+    cancelRename();
+  }
+
+  function resetFilters() {
+    filterDateFrom = '';
+    filterDateTo = '';
+    filterSeriesId = '';
+    filterStatus = '';
+    selectedViewId = '';
   }
 
   let dashboard = $derived(
@@ -39,13 +143,6 @@
   );
 
   let { filteredEvents, eventStats, aggregate, seriesStats, timeTrend, anomalies, groupsSummary, statusBucket } = $derived(dashboard);
-
-  function resetFilters() {
-    filterDateFrom = '';
-    filterDateTo = '';
-    filterSeriesId = '';
-    filterStatus = '';
-  }
 
   function handleAnomalyClick(anomaly) {
     onNavigateToEvent(anomaly.eventId, anomaly.navigateTarget);
@@ -79,11 +176,78 @@
 
 <div class="opsDashboard">
   <div class="opsHeader">
-    <h2><BarChart3 size={20} />读书会运营工作台</h2>
-    <div class="opsHeaderSub">
-      <span>共 <strong>{filteredEvents.length}</strong> 场活动 · <strong>{groupsSummary.total}</strong> 条报名</span>
+    <div class="opsHeaderLeft">
+      <h2><BarChart3 size={20} />读书会运营工作台</h2>
+      <div class="opsHeaderSub">
+        <span>共 <strong>{filteredEvents.length}</strong> 场活动 · <strong>{groupsSummary.total}</strong> 条报名</span>
+      </div>
+    </div>
+    <div class="opsHeaderRight">
+      <div class="viewSelector">
+        <button class="ghost viewMenuBtn" on:click={() => showViewMenu = !showViewMenu}>
+          <Bookmark size={14} />
+          <span>{selectedViewId ? views.find((v) => v.id === selectedViewId)?.name : '常用视图'}</span>
+          <ChevronDown size={14} />
+        </button>
+        {#if showViewMenu}
+          <div class="viewMenu" on:click|self={() => {}}>
+            <div class="viewMenuHeader">
+              <span>常用视图</span>
+              <button class="ghost tiny" on:click={openSaveDialog}><Save size={12} /> 保存当前</button>
+            </div>
+            {#if views.length === 0}
+              <div class="viewMenuEmpty">暂无保存的视图</div>
+            {:else}
+              <div class="viewMenuList">
+                {#each views as view}
+                  <div class="viewMenuItem" class:active={selectedViewId === view.id}>
+                    {#if editingViewId === view.id}
+                      <div class="viewRenameForm" on:click|stopPropagation>
+                        <input type="text" bind:value={editingViewName} on:keydown={(e) => { if (e.key === 'Enter') confirmRename(view.id); if (e.key === 'Escape') cancelRename(); }} autofocus />
+                        <button class="ghost tiny" on:click|stopPropagation={() => confirmRename(view.id)}><Check size={12} /></button>
+                        <button class="ghost tiny" on:click|stopPropagation={cancelRename}><X size={12} /></button>
+                      </div>
+                    {:else}
+                      <button class="viewItemBtn" on:click={() => applyView(view)}>
+                        <FolderOpen size={14} />
+                        <span>{view.name}</span>
+                      </button>
+                      <div class="viewItemActions">
+                        <button class="ghost tiny" on:click|stopPropagation={(e) => startRename(view, e)} title="重命名"><Edit3 size={12} /></button>
+                        <button class="ghost tiny danger" on:click|stopPropagation={(e) => handleDeleteView(view.id, e)} title="删除"><Trash2 size={12} /></button>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <button class="ghost saveViewBtn" on:click={openSaveDialog} title="保存当前筛选条件为视图">
+        <Save size={14} /> 保存视图
+      </button>
     </div>
   </div>
+
+  {#if showSaveDialog}
+    <div class="modalOverlay" on:click={closeSaveDialog}>
+      <div class="modalContent" on:click|stopPropagation>
+        <h3><Save size={16} /> 保存为常用视图</h3>
+        <input type="text" bind:value={newViewName} placeholder="输入视图名称，如：本月开放活动" autofocus on:keydown={(e) => { if (e.key === 'Enter') handleSaveView(); if (e.key === 'Escape') closeSaveDialog(); }} />
+        <div class="viewPreview">
+          <div class="viewPreviewRow"><span>日期范围：</span><strong>{filterDateFrom || '不限'} ~ {filterDateTo || '不限'}</strong></div>
+          <div class="viewPreviewRow"><span>系列：</span><strong>{filterSeriesId ? series.find((s) => s.id === filterSeriesId)?.title : '全部'}</strong></div>
+          <div class="viewPreviewRow"><span>状态：</span><strong>{filterStatus || '全部'}</strong></div>
+          <div class="viewPreviewRow"><span>趋势粒度：</span><strong>{granularity === 'week' ? '周' : '月'}</strong></div>
+        </div>
+        <div class="modalActions">
+          <button class="ghost" on:click={closeSaveDialog}>取消</button>
+          <button on:click={handleSaveView} disabled={!newViewName.trim()}>保存</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <div class="opsFilters">
     <div class="filterRow">
@@ -551,6 +715,150 @@
 
   .empty { text-align: center; color: #999; padding: 40px 20px; }
   .ghost { background: #eee8dc; color: #312d25; }
+
+  .opsHeaderLeft { display: flex; flex-direction: column; gap: 4px; }
+  .opsHeaderRight { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .viewSelector { position: relative; }
+  .viewMenuBtn { display: inline-flex; align-items: center; gap: 6px; }
+  .saveViewBtn { display: inline-flex; align-items: center; gap: 6px; }
+
+  .viewMenu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 260px;
+    background: #fff;
+    border: 1px solid #e1d8ca;
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgb(49 43 31 / .15);
+    z-index: 100;
+    overflow: hidden;
+  }
+  .viewMenuHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #f8f5ee;
+    border-bottom: 1px solid #e1d8ca;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b6459;
+  }
+  .viewMenuEmpty {
+    padding: 20px;
+    text-align: center;
+    color: #999;
+    font-size: 13px;
+  }
+  .viewMenuList {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .viewMenuItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f0e6d2;
+  }
+  .viewMenuItem:last-child { border-bottom: none; }
+  .viewMenuItem:hover { background: #fffaf2; }
+  .viewMenuItem.active { background: #fff3e0; }
+  .viewItemBtn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    padding: 4px 0;
+    cursor: pointer;
+    font-size: 13px;
+    color: #4b4435;
+    text-align: left;
+  }
+  .viewItemBtn:hover { color: #2a2822; }
+  .viewItemActions { display: inline-flex; gap: 4px; }
+  .viewItemActions .danger:hover { background: #fdecea; color: #a33; }
+
+  .viewRenameForm {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .viewRenameForm input {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 13px;
+    border: 1px solid #e1d8ca;
+    border-radius: 4px;
+    outline: none;
+  }
+  .viewRenameForm input:focus { border-color: #7b6b4e; }
+
+  .modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+  }
+  .modalContent {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    min-width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 20px 60px rgb(49 43 31 / .3);
+  }
+  .modalContent h3 {
+    margin: 0 0 12px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    color: #4b4435;
+  }
+  .modalContent input {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    border: 1px solid #e1d8ca;
+    border-radius: 6px;
+    outline: none;
+    margin-bottom: 12px;
+  }
+  .modalContent input:focus { border-color: #7b6b4e; }
+  .viewPreview {
+    background: #faf7f0;
+    border: 1px solid #e8ddc8;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 16px;
+  }
+  .viewPreviewRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 13px;
+  }
+  .viewPreviewRow span { color: #6b6459; }
+  .viewPreviewRow strong { color: #4b4435; }
+  .modalActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .modalActions button { padding: 8px 16px; }
+  .modalActions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .ghost.tiny.danger:hover { background: #fdecea; color: #a33; }
 
   @media (max-width: 900px) {
     .opsMetrics { grid-template-columns: repeat(2, 1fr); }

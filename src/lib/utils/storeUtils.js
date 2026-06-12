@@ -6,7 +6,8 @@ const KEYS = {
   signups: 'zfl-6-signups',
   mySignupIds: 'zfl-6-my-signup-ids',
   series: 'zfl-6-series',
-  readers: 'zfl-6-readers'
+  readers: 'zfl-6-readers',
+  opsViews: 'zfl-6-ops-views'
 };
 
 function safeParse(str, fallback) {
@@ -82,6 +83,68 @@ export function readSeries() {
 
 export function writeSeries(series) {
   localStorage.setItem(KEYS.series, safeStringify(series));
+}
+
+export function readViews() {
+  return safeParse(localStorage.getItem(KEYS.opsViews), []);
+}
+
+export function writeViews(views) {
+  localStorage.setItem(KEYS.opsViews, safeStringify(views));
+}
+
+export function createView(viewData) {
+  const views = readViews();
+  const newView = {
+    id: crypto.randomUUID(),
+    name: viewData.name.trim(),
+    filters: {
+      dateFrom: viewData.filters?.dateFrom || '',
+      dateTo: viewData.filters?.dateTo || '',
+      seriesId: viewData.filters?.seriesId || '',
+      status: viewData.filters?.status || ''
+    },
+    granularity: viewData.granularity || 'month',
+    expandedSections: {
+      overview: viewData.expandedSections?.overview ?? true,
+      groups: viewData.expandedSections?.groups ?? true,
+      anomalies: viewData.expandedSections?.anomalies ?? true,
+      series: viewData.expandedSections?.series ?? false,
+      trend: viewData.expandedSections?.trend ?? false,
+      detail: viewData.expandedSections?.detail ?? true
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  views.push(newView);
+  writeViews(views);
+  return newView;
+}
+
+export function updateView(viewId, updates) {
+  const views = readViews();
+  const index = views.findIndex((v) => v.id === viewId);
+  if (index === -1) return null;
+  views[index] = {
+    ...views[index],
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+  writeViews(views);
+  return views[index];
+}
+
+export function deleteView(viewId) {
+  const views = readViews();
+  const filtered = views.filter((v) => v.id !== viewId);
+  writeViews(filtered);
+  return filtered;
+}
+
+export function renameView(viewId, newName) {
+  const trimmedName = newName.trim();
+  if (!trimmedName) return null;
+  return updateView(viewId, { name: trimmedName });
 }
 
 export function readAllStore() {

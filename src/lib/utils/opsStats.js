@@ -334,3 +334,22 @@ export function buildOpsDashboardData(events, signups, series, filters = {}) {
     statusBucket
   };
 }
+
+export function buildFiltersFromView(view) {
+  if (!view) {
+    return {
+      dateFrom: undefined,
+      dateTo: undefined,
+      seriesId: undefined,
+      status: undefined,
+      granularity: 'month'
+    };
+  }
+  return {
+    dateFrom: view.filters?.dateFrom || undefined,
+    dateTo: view.filters?.dateTo || undefined,
+    seriesId: view.filters?.seriesId || undefined,
+    status: view.filters?.status || undefined,
+    granularity: view.granularity || 'month'
+  };
+}

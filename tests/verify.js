@@ -1,3 +1,19 @@
+if (typeof globalThis.localStorage === 'undefined') {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => store.get(key) || null,
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: (key) => store.delete(key),
+    clear: () => store.clear()
+  };
+}
+
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = {
+    randomUUID: () => 'test-uuid-' + Math.random().toString(36).slice(2, 11)
+  };
+}
+
 import {
   getEventStats,
   getAggregateStats,
@@ -7,7 +23,8 @@ import {
   getTimeTrend,
   getSignupGroupsSummary,
   getEventsByStatusBucket,
-  buildOpsDashboardData
+  buildOpsDashboardData,
+  buildFiltersFromView
 } from '../src/lib/utils/opsStats.js';
 import {
   normalizeEvent,
@@ -27,7 +44,13 @@ import {
   getRegularSignupCount,
   getWaitlistCount,
   getPendingCount,
-  getSeatsLeft
+  getSeatsLeft,
+  readViews,
+  writeViews,
+  createView,
+  updateView,
+  deleteView,
+  renameView
 } from '../src/lib/utils/storeUtils.js';
 import {
   toggleEventStatus,
@@ -571,6 +594,223 @@ assertIncludes(anomalyTypes, 'pending', '审核积压 anomaly has navigateTarget
 assertIncludes(anomalyTypes, 'checkin', '签到率低 anomaly has navigateTarget.type=checkin');
 assertIncludes(anomalyTypes, 'waitlist', '满员候补 anomaly has navigateTarget.type=waitlist');
 assertIncludes(anomalyTypes, 'rejected', '转化率低 anomaly has navigateTarget.type=rejected');
+
+console.log('\n=== 常用视图功能测试 ===\n');
+
+writeViews([]);
+
+console.log('--- 基础存储 (readViews/writeViews) ---');
+const initialViews = readViews();
+assertEqual(initialViews.length, 0, '初始视图列表为空');
+
+writeViews([{ id: 'test-v1', name: '测试视图' }]);
+const afterWrite = readViews();
+assertEqual(afterWrite.length, 1, '写入后视图列表有1条记录');
+assertEqual(afterWrite[0].name, '测试视图', '视图名称正确');
+
+writeViews([]);
+assertEqual(readViews().length, 0, '清空后视图列表为空');
+
+console.log('\n--- createView ---');
+const viewData1 = {
+  name: '本月开放活动',
+  filters: {
+    dateFrom: '2025-06-01',
+    dateTo: '2025-06-30',
+    seriesId: '',
+    status: '开放报名'
+  },
+  granularity: 'week',
+  expandedSections: {
+    overview: true,
+    groups: true,
+    anomalies: true,
+    series: false,
+    trend: true,
+    detail: true
+  }
+};
+const created1 = createView(viewData1);
+assert(created1.id !== undefined, 'createView 返回带 id 的视图对象');
+assertEqual(created1.name, '本月开放活动', 'createView 名称正确');
+assertEqual(created1.filters.dateFrom, '2025-06-01', 'createView 保存 dateFrom');
+assertEqual(created1.filters.dateTo, '2025-06-30', 'createView 保存 dateTo');
+assertEqual(created1.filters.status, '开放报名', 'createView 保存 status');
+assertEqual(created1.granularity, 'week', 'createView 保存 granularity');
+assertEqual(created1.expandedSections.trend, true, 'createView 保存 expandedSections');
+assert(created1.createdAt !== undefined, 'createView 设置 createdAt');
+assert(created1.updatedAt !== undefined, 'createView 设置 updatedAt');
+
+const viewsAfterCreate = readViews();
+assertEqual(viewsAfterCreate.length, 1, 'createView 后列表有1条记录');
+
+const viewData2 = {
+  name: '拉美文学系列',
+  filters: {
+    dateFrom: '',
+    dateTo: '',
+    seriesId: 's1',
+    status: ''
+  },
+  granularity: 'month',
+  expandedSections: {
+    overview: true,
+    groups: true,
+    anomalies: false,
+    series: true,
+    trend: false,
+    detail: false
+  }
+};
+const created2 = createView(viewData2);
+assertEqual(readViews().length, 2, 'createView 第二个视图后列表有2条记录');
+
+console.log('\n--- createView 空值处理 ---');
+const viewDataEmpty = {
+  name: '  空筛选视图  ',
+  filters: {},
+  granularity: undefined
+};
+const createdEmpty = createView(viewDataEmpty);
+assertEqual(createdEmpty.name, '空筛选视图', '名称自动 trim');
+assertEqual(createdEmpty.filters.dateFrom, '', '缺失 filter 字段填充空字符串');
+assertEqual(createdEmpty.filters.seriesId, '', '缺失 seriesId 填充空字符串');
+assertEqual(createdEmpty.granularity, 'month', '缺失 granularity 默认 month');
+assertEqual(createdEmpty.expandedSections.overview, true, '缺失 expandedSections 使用默认值');
+assertEqual(createdEmpty.expandedSections.series, false, '默认 series 区块折叠');
+
+assertEqual(readViews().length, 3, 'createView 空视图后列表有3条记录');
+
+console.log('\n--- updateView ---');
+const updated = updateView(created1.id, { name: '六月开放活动' });
+assert(updated !== null, 'updateView 返回更新后的视图');
+assertEqual(updated.name, '六月开放活动', 'updateView 更新名称');
+assert(updated.updatedAt > created1.updatedAt, 'updateView 更新 updatedAt');
+
+const updatedViewInList = readViews().find((v) => v.id === created1.id);
+assertEqual(updatedViewInList.name, '六月开放活动', '列表中名称已更新');
+
+const updateNonExistent = updateView('non-existent', { name: 'x' });
+assertEqual(updateNonExistent, null, 'updateView 不存在的 id 返回 null');
+
+console.log('\n--- renameView ---');
+const renamed = renameView(created2.id, '  拉美文学经典系列  ');
+assertEqual(renamed.name, '拉美文学经典系列', 'renameView 自动 trim 名称');
+
+const renameEmpty = renameView(created2.id, '   ');
+assertEqual(renameEmpty, null, 'renameView 空名称不更新');
+
+console.log('\n--- deleteView ---');
+const originalEvents = [...mockEvents];
+const originalSignups = [...mockSignups];
+
+const beforeDeleteCount = readViews().length;
+const afterDelete = deleteView(createdEmpty.id);
+assertEqual(afterDelete.length, beforeDeleteCount - 1, 'deleteView 返回减少后的列表');
+assertEqual(readViews().length, beforeDeleteCount - 1, '列表中已删除');
+
+const afterDelete2 = deleteView(created1.id);
+assertEqual(readViews().length, beforeDeleteCount - 2, '删除第二个视图后列表长度正确');
+
+deleteView(created2.id);
+assertEqual(readViews().length, 0, '删除所有视图后列表为空');
+
+assertEqual(originalEvents.length, mockEvents.length, '删除视图不影响原始活动数据');
+assertEqual(originalSignups.length, mockSignups.length, '删除视图不影响原始报名数据');
+
+console.log('\n--- buildFiltersFromView ---');
+const testView = createView({
+  name: '筛选测试视图',
+  filters: {
+    dateFrom: '2025-07-01',
+    dateTo: '2025-07-31',
+    seriesId: 's1',
+    status: '已关闭'
+  },
+  granularity: 'week'
+});
+const filtersFromView = buildFiltersFromView(testView);
+assertEqual(filtersFromView.dateFrom, '2025-07-01', 'buildFiltersFromView 转换 dateFrom');
+assertEqual(filtersFromView.dateTo, '2025-07-31', 'buildFiltersFromView 转换 dateTo');
+assertEqual(filtersFromView.seriesId, 's1', 'buildFiltersFromView 转换 seriesId');
+assertEqual(filtersFromView.status, '已关闭', 'buildFiltersFromView 转换 status');
+assertEqual(filtersFromView.granularity, 'week', 'buildFiltersFromView 转换 granularity');
+
+const filtersFromNull = buildFiltersFromView(null);
+assertEqual(filtersFromNull.dateFrom, undefined, 'null 视图 dateFrom 为 undefined');
+assertEqual(filtersFromNull.granularity, 'month', 'null 视图 granularity 默认 month');
+
+const viewWithEmptyFilters = createView({
+  name: '空筛选',
+  filters: { dateFrom: '', dateTo: '', seriesId: '', status: '' }
+});
+const filtersFromEmpty = buildFiltersFromView(viewWithEmptyFilters);
+assertEqual(filtersFromEmpty.dateFrom, undefined, '空字符串 dateFrom 转换为 undefined');
+assertEqual(filtersFromEmpty.seriesId, undefined, '空字符串 seriesId 转换为 undefined');
+assertEqual(filtersFromEmpty.status, undefined, '空字符串 status 转换为 undefined');
+
+console.log('\n--- 视图筛选口径一致性验证 ---');
+const viewForStats = createView({
+  name: '7月统计视图',
+  filters: {
+    dateFrom: '2025-07-01',
+    dateTo: '2025-07-31',
+    seriesId: 's1',
+    status: ''
+  },
+  granularity: 'week'
+});
+
+const dashboardFromDirectFilters = buildOpsDashboardData(mockEvents, mockSignups, mockSeries, {
+  dateFrom: '2025-07-01',
+  dateTo: '2025-07-31',
+  seriesId: 's1',
+  granularity: 'week'
+});
+
+const viewFilters = buildFiltersFromView(viewForStats);
+const dashboardFromView = buildOpsDashboardData(mockEvents, mockSignups, mockSeries, viewFilters);
+
+assertEqual(
+  dashboardFromView.filteredEvents.length,
+  dashboardFromDirectFilters.filteredEvents.length,
+  '视图筛选的活动数量与直接筛选一致'
+);
+assertEqual(
+  dashboardFromView.aggregate.totalSignups,
+  dashboardFromDirectFilters.aggregate.totalSignups,
+  '视图筛选的总报名数与直接筛选一致'
+);
+assertEqual(
+  dashboardFromView.groupsSummary.total,
+  dashboardFromDirectFilters.groupsSummary.total,
+  '视图筛选的报名分组总数与直接筛选一致'
+);
+assertEqual(
+  dashboardFromView.timeTrend.length,
+  dashboardFromDirectFilters.timeTrend.length,
+  '视图筛选的时间趋势周期数与直接筛选一致'
+);
+
+const e1OnlyView = createView({
+  name: '仅e1活动',
+  filters: {
+    dateFrom: '2025-06-01',
+    dateTo: '2025-06-01',
+    seriesId: '',
+    status: ''
+  }
+});
+const e1ViewFilters = buildFiltersFromView(e1OnlyView);
+const e1Dashboard = buildOpsDashboardData(mockEvents, mockSignups, mockSeries, e1ViewFilters);
+assertEqual(e1Dashboard.filteredEvents.length, 1, '视图筛选后仅1场活动');
+assertEqual(e1Dashboard.filteredEvents[0].book, '秋园', '视图筛选出正确的活动');
+assertEqual(e1Dashboard.groupsSummary.total, 4, '视图筛选后报名数=4（与验证脚本e1筛选口径一致）');
+assertEqual(e1Dashboard.groupsSummary.regular, 3, '视图筛选后正式名额=3（口径一致）');
+assertEqual(e1Dashboard.groupsSummary.pending, 0, '视图筛选后待审核=0（口径一致）');
+
+writeViews([]);
+assertEqual(readViews().length, 0, '测试结束后清空视图数据');
 
 console.log('\n' + '='.repeat(40));
 console.log(`结果: ${passed} 通过, ${failed} 失败`);
