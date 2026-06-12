@@ -935,6 +935,52 @@ const doubleUndo = undoOperation(undoCreate.logs, createRec.log.id, undoCreate.s
 assert(!doubleUndo.success, '重复撤销失败');
 assertEqual(doubleUndo.reason, '该操作已撤销', '错误原因正确');
 
+console.log('\n--- 非最新操作撤销保护 ---\n');
+clearOperationLogs();
+let protectState = { events: [], signups: [], readers: [], mySignupIds: [], series: [] };
+let protectLogs = [];
+
+const protEvent1 = { id: 'pe1', book: '保护测试活动1', host: 'H1', time: '2025-10-01T19:00', limit: 5, status: '开放报名', reviewRequired: false };
+const protBefore1 = buildBeforeStateSnapshot(protectState);
+protectState = { ...protectState, events: [protEvent1, ...protectState.events] };
+const protAfter1 = buildAfterStateSnapshot(protBefore1, protectState);
+const protRec1 = recordOperation(protectLogs, OPERATION_TYPES.CREATE_EVENT, '创建活动：保护测试活动1', { eventId: 'pe1', eventName: '保护测试活动1' }, protBefore1, protAfter1, { book: '保护测试活动1' });
+protectLogs = protRec1.logs;
+
+const protEvent2 = { id: 'pe2', book: '保护测试活动2', host: 'H2', time: '2025-10-02T19:00', limit: 8, status: '开放报名', reviewRequired: false };
+const protBefore2 = buildBeforeStateSnapshot(protectState);
+protectState = { ...protectState, events: [protEvent2, ...protectState.events] };
+const protAfter2 = buildAfterStateSnapshot(protBefore2, protectState);
+const protRec2 = recordOperation(protectLogs, OPERATION_TYPES.CREATE_EVENT, '创建活动：保护测试活动2', { eventId: 'pe2', eventName: '保护测试活动2' }, protBefore2, protAfter2, { book: '保护测试活动2' });
+protectLogs = protRec2.logs;
+
+const protEvent3 = { id: 'pe3', book: '保护测试活动3', host: 'H3', time: '2025-10-03T19:00', limit: 10, status: '开放报名', reviewRequired: false };
+const protBefore3 = buildBeforeStateSnapshot(protectState);
+protectState = { ...protectState, events: [protEvent3, ...protectState.events] };
+const protAfter3 = buildAfterStateSnapshot(protBefore3, protectState);
+const protRec3 = recordOperation(protectLogs, OPERATION_TYPES.CREATE_EVENT, '创建活动：保护测试活动3', { eventId: 'pe3', eventName: '保护测试活动3' }, protBefore3, protAfter3, { book: '保护测试活动3' });
+protectLogs = protRec3.logs;
+
+assertEqual(protectState.events.length, 3, '保护测试：创建3个活动');
+assertEqual(getUndoableLogs(protectLogs).length, 3, '保护测试：有3条可撤销日志');
+
+const undoMiddle = undoOperation(protectLogs, protRec2.log.id, protectState);
+assert(!undoMiddle.success, '保护测试：禁止撤销中间的操作');
+assertEqual(undoMiddle.reason, '只能撤销最新的未撤销操作，请先撤销后续操作', '保护测试：错误原因正确');
+assertEqual(protectState.events.length, 3, '保护测试：状态未被修改');
+
+const undoOldest = undoOperation(protectLogs, protRec1.log.id, protectState);
+assert(!undoOldest.success, '保护测试：禁止撤销最早的操作');
+assertEqual(undoOldest.reason, '只能撤销最新的未撤销操作，请先撤销后续操作', '保护测试：错误原因正确');
+
+const undoLatest = undoOperation(protectLogs, protRec3.log.id, protectState);
+assert(undoLatest.success, '保护测试：可以撤销最新的操作');
+assertEqual(undoLatest.state.events.length, 2, '保护测试：撤销最新后剩2个活动');
+
+const undoNowLatest = undoOperation(undoLatest.logs, protRec2.log.id, undoLatest.state);
+assert(undoNowLatest.success, '保护测试：最新操作撤销后，原来的中间操作变成最新，可以撤销');
+assertEqual(undoNowLatest.state.events.length, 1, '保护测试：继续撤销后剩1个活动');
+
 console.log('\n=== 撤销场景：调整名额触发候补转正 → 撤销 ===\n');
 clearOperationLogs();
 const eventWL = { id: 'ev-wl', book: '候补活动', host: 'H', time: '2025-08-15T19:00', limit: 2, status: '开放报名', reviewRequired: false };

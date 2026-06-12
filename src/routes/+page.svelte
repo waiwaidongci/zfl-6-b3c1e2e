@@ -397,7 +397,7 @@
       events = updatedEvents;
       let updatedSignups = signups;
       if (newLimit > prevLimit) {
-        updatedSignups = promoteFromWaitlist(eventId, updatedEvents);
+        updatedSignups = promoteFromWaitlist(updatedEvents, signups, eventId);
         signups = updatedSignups;
       }
 
@@ -904,6 +904,7 @@
 
   $: undoableLogs = getUndoableLogs(operationLogs);
   $: undoableCount = undoableLogs.length;
+  $: latestUndoableId = undoableLogs.length > 0 ? undoableLogs[0].id : null;
 </script>
 
 <main>
@@ -2078,8 +2079,13 @@
                 </div>
                 {#if !log.undone}
                   <div class="oplog-item-actions">
-                    <button class="undo-btn" on:click={() => handleUndoOperation(log.id)} title="撤销此操作">
-                      ↩️ 撤销
+                    <button
+                      class="undo-btn"
+                      disabled={log.id !== latestUndoableId}
+                      title={log.id === latestUndoableId ? '撤销此操作' : '只能撤销最新的操作，请先撤销后续操作'}
+                      on:click={() => handleUndoOperation(log.id)}
+                    >
+                      ↩️ {log.id === latestUndoableId ? '撤销' : '需先撤销后续'}
                     </button>
                   </div>
                 {/if}
@@ -2908,6 +2914,21 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 }
 
 .undo-btn:active { transform: translateY(0); }
+
+.undo-btn:disabled {
+  background: #f5f5f5;
+  color: #999;
+  border-color: #e0e0e0;
+  cursor: not-allowed;
+  opacity: 0.7;
+  transform: none;
+}
+
+.undo-btn:disabled:hover {
+  background: #f5f5f5;
+  border-color: #e0e0e0;
+  transform: none;
+}
 
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } .oplog-panel { width: 100vw; } }
 </style>

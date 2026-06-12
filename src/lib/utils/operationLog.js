@@ -141,6 +141,12 @@ export function undoOperation(logs, logId, currentState) {
   const log = logs[logIndex];
   if (log.undone) return { success: false, reason: '该操作已撤销', logs, state: currentState };
 
+  const undoableLogs = logs.filter((l) => !l.undone);
+  const isLatestUndoable = undoableLogs.length > 0 && undoableLogs[0].id === logId;
+  if (!isLatestUndoable) {
+    return { success: false, reason: '只能撤销最新的未撤销操作，请先撤销后续操作', logs, state: currentState };
+  }
+
   const restoredState = restoreStateFromLog(log, currentState);
 
   const updatedLogs = logs.map((l, i) =>
