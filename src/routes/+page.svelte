@@ -35,7 +35,7 @@
     sortReadersByActivity,
     filterReaderStatsByTags
   } from '$lib/utils/readerStats.js';
-  import { previewImport as csvPreviewImport, applyImport } from '$lib/utils/csvTools.js';
+  import { previewImport as csvPreviewImport, applyImport, SYSTEM_FIELDS, CONFLICT_STRATEGIES, autoDetectMapping } from '$lib/utils/csvTools.js';
   import {
     toggleEventStatus as toggleEventStatusAction,
     toggleCheckIn as toggleCheckInAction,
@@ -101,6 +101,11 @@
   let importPreview = null;
   let importErrors = [];
   let importStats = null;
+  let importCsvHeaders = [];
+  let importFieldMapping = {};
+  let importConflictStrategy = 'skip';
+  let importMappingStep = false;
+  let importSampleRows = [];
   let showPrintView = false;
   let showPublicLinkModal = false;
   let publicLinkModalType = 'single';
@@ -496,23 +501,80 @@
   }
 
   function previewImport() {
-    const result = csvPreviewImport({ importCsvText, events, signups, isoFn: iso });
-    importPreview = result.preview;
-    importErrors = result.errors;
-    importStats = result.stats;
+    if (!importCsvText.trim()) {
+      importErrors = ['请先粘贴CSV文本'];
+      return;
+    }
+
+    const parsed = csvPreviewImport({
+      importCsvText,
+      events,
+      signups,
+      readers,
+      fieldMapping: Object.keys(importFieldMapping).length > 0 ? importFieldMapping : undefined,
+      conflictStrategy: importConflictStrategy,
+      isoFn: iso
+    });
+
+    if (parsed.headers && parsed.headers.length > 0) {
+      importCsvHeaders = parsed.headers;
+      if (parsed.parsed && parsed.parsed.rows && parsed.parsed.rows.length > 0) {
+        importSampleRows = parsed.parsed.rows.slice(0, 3);
+      } else {
+        importSampleRows = [];
+      }
+      if (parsed.fieldMapping) {
+        importFieldMapping = parsed.fieldMapping;
+      }
+    }
+
+    if (parsed.errors && parsed.errors.length > 0 && !parsed.preview) {
+      const hasMappingError = parsed.errors.some((e) => e.includes('字段映射'));
+      if (hasMappingError && importCsvHeaders.length > 0) {
+        importMappingStep = true;
+      }
+      importErrors = parsed.errors;
+      importPreview = null;
+      importStats = null;
+      return;
+    }
+
+    importPreview = parsed.preview;
+    importErrors = parsed.errors || [];
+    importStats = parsed.stats;
+    importMappingStep = false;
   }
 
   function confirmImport() {
     if (!importPreview) return;
 
-    const { newEvents, newSignups } = applyImport(importPreview);
-    events = [...newEvents, ...events];
-    signups = [...newSignups, ...signups];
+    const result = applyImport(importPreview, readers);
+    events = [...result.newEvents, ...events];
+    signups = [...result.newSignups, ...signups];
+
+    if (result.updatedSignups && result.updatedSignups.length > 0) {
+      const updateMap = new Map();
+      result.updatedSignups.forEach((u) => updateMap.set(u.id, u.updates));
+      signups = signups.map((s) => {
+        const updates = updateMap.get(s.id);
+        if (!updates) return s;
+        return { ...s, ...updates };
+      });
+    }
+
+    if (result.readers) {
+      readers = result.readers;
+    }
 
     importCsvText = '';
     importPreview = null;
     importErrors = [];
     importStats = null;
+    importCsvHeaders = [];
+    importFieldMapping = {};
+    importConflictStrategy = 'skip';
+    importMappingStep = false;
+    importSampleRows = [];
   }
 
   function cancelImport() {
@@ -520,6 +582,34 @@
     importPreview = null;
     importErrors = [];
     importStats = null;
+    importCsvHeaders = [];
+    importFieldMapping = {};
+    importConflictStrategy = 'skip';
+    importMappingStep = false;
+    importSampleRows = [];
+  }
+
+  function openMappingStep() {
+    if (!importCsvText.trim()) return;
+    const detectResult = csvPreviewImport({
+      importCsvText,
+      events,
+      signups,
+      readers,
+      conflictStrategy: importConflictStrategy,
+      isoFn: iso
+    });
+    if (detectResult.headers && detectResult.headers.length > 0) {
+      importCsvHeaders = detectResult.headers;
+      importFieldMapping = detectResult.fieldMapping || autoDetectMapping(detectResult.headers);
+      if (detectResult.parsed && detectResult.parsed.rows && detectResult.parsed.rows.length > 0) {
+        importSampleRows = detectResult.parsed.rows.slice(0, 3);
+      }
+      importMappingStep = true;
+      importErrors = [];
+      importPreview = null;
+      importStats = null;
+    }
   }
 
   function openPublicLinkForEvent(eventId) {
@@ -1265,11 +1355,14 @@
           <section class="importSection">
             <section class="panel">
               <h2><Download size={18} />CSV数据导入</h2>
-              <p class="importHint">兼容现有CSV导出格式，支持批量导入活动和报名名单。必要列：活动、姓名、手机。可选列：回答、报名类型、审核状态、拒绝原因、报名时间、审核时间、签到状态、签到时间、候补顺序。</p>
-              <textarea bind:value={importCsvText} placeholder="粘贴CSV文本，首行为表头&#10;例如：&#10;活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序&#10;秋园,张三,13800138000,第一章,正式,已通过,-,2024/1/1 10:00,-,未到场,-,-"></textarea>
+              <p class="importHint">支持任意列名的CSV文件，导入前可手动映射字段。必要字段：<strong>活动</strong>、<strong>姓名</strong>、<strong>手机</strong>。可选字段：回答、报名类型、审核状态、拒绝原因、报名时间、审核时间、签到状态、签到时间、候补顺序。</p>
+              <textarea bind:value={importCsvText} placeholder="粘贴CSV文本，首行为表头&#10;例如：&#10;活动名称,报名人,联系方式,回答内容,类型,审核&#10;秋园,张三,13800138000,第一章,正式,已通过"></textarea>
               <div class="formActions">
                 <button type="button" on:click={previewImport}>预览导入结果</button>
-                {#if importPreview || importErrors.length > 0}
+                {#if importCsvText.trim()}
+                  <button type="button" class="ghost" on:click={openMappingStep} title="手动设置列与字段的对应关系">设置字段映射</button>
+                {/if}
+                {#if importPreview || importErrors.length > 0 || importMappingStep}
                   <button type="button" class="ghost" on:click={cancelImport}>清空</button>
                 {/if}
               </div>
@@ -1286,41 +1379,126 @@
               </section>
             {/if}
 
+            {#if importMappingStep && importCsvHeaders.length > 0}
+              <section class="panel mappingPanel">
+                <h3 class="importSectionTitle">🔗 字段映射设置</h3>
+                <p class="mappingHint">将CSV中的列映射到系统字段。带 <span class="requiredStar">*</span> 标记的为必填项。已自动尝试识别常见列名，请核对并调整。</p>
+
+                {#if importSampleRows.length > 0}
+                  <div class="sampleDataHint">
+                    <strong>📋 CSV样例（前{importSampleRows.length}行）：</strong>
+                    <div class="sampleTableWrap">
+                      <table class="sampleTable">
+                        <thead>
+                          <tr>
+                            {#each importCsvHeaders as h, hi}
+                              <th>列{hi + 1}<br /><small>{h}</small></th>
+                            {/each}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each importSampleRows as row}
+                            <tr>
+                              {#each importCsvHeaders as _, hi}
+                                <td>{row[hi] || '-'}</td>
+                              {/each}
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="mappingGrid">
+                  {#each SYSTEM_FIELDS as field}
+                    <div class="mappingRow">
+                      <div class="mappingFieldLabel">
+                        <span class:requiredField={field.required}>{field.label}</span>
+                        {#if field.required}<span class="requiredStar">*</span>{/if}
+                        <span class="fieldHint">{field.hint}</span>
+                      </div>
+                      <select
+                        bind:value={importFieldMapping[field.key]}
+                        class:mappingRequired={field.required && (importFieldMapping[field.key] === undefined || importFieldMapping[field.key] === null || importFieldMapping[field.key] === '')}
+                      >
+                        <option value="">（不映射此字段）</option>
+                        {#each importCsvHeaders as h, hi}
+                          <option value={String(hi)}>{`列${hi + 1}: ${h}`}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  {/each}
+                </div>
+
+                <div class="conflictStrategySection">
+                  <h4 class="importSubTitle">⚙️ 冲突处理策略</h4>
+                  <p class="conflictHint">当CSV中存在与系统「同活动+同手机号」的报名记录时如何处理：</p>
+                  <div class="conflictOptions">
+                    {#each CONFLICT_STRATEGIES as strategy}
+                      <label class="conflictOption" class:conflictActive={importConflictStrategy === strategy.key}>
+                        <input type="radio" bind:group={importConflictStrategy} value={strategy.key} />
+                        <div class="conflictOptionContent">
+                          <strong>{strategy.label}</strong>
+                          <span>{strategy.desc}</span>
+                        </div>
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="formActions mappingActions">
+                  <button type="button" on:click={previewImport}>用此设置预览</button>
+                  <button type="button" class="ghost" on:click={() => { importMappingStep = false; }}>返回</button>
+                </div>
+              </section>
+            {/if}
+
             {#if importPreview}
               <section class="panel importPreviewPanel">
-                <div class="importStats">
-                  <div class="importStatItem">
-                    <strong>{importStats.eventCount}</strong>
-                    <span>新增活动</span>
+                <div class="previewSummaryBar">
+                  <div class="importStats">
+                    <div class="importStatItem">
+                      <strong>{importStats.newEventCount}</strong>
+                      <span>新增活动</span>
+                    </div>
+                    <div class="importStatItem success">
+                      <strong>{importStats.newSignupCount}</strong>
+                      <span>新增报名</span>
+                    </div>
+                    <div class="importStatItem info">
+                      <strong>{importStats.updateCount}</strong>
+                      <span>将更新</span>
+                    </div>
+                    <div class="importStatItem warn">
+                      <strong>{importStats.duplicateCount}</strong>
+                      <span>跳过/重复</span>
+                    </div>
+                    <div class="importStatItem error">
+                      <strong>{importStats.errorCount}</strong>
+                      <span>错误行数</span>
+                    </div>
                   </div>
-                  <div class="importStatItem">
-                    <strong>{importStats.signupCount}</strong>
-                    <span>新增报名</span>
-                  </div>
-                  <div class="importStatItem warn">
-                    <strong>{importStats.duplicateCount}</strong>
-                    <span>重复跳过</span>
-                  </div>
-                  <div class="importStatItem error">
-                    <strong>{importStats.errorCount}</strong>
-                    <span>错误行数</span>
+                  <div class="conflictSummaryTag">
+                    冲突策略：<strong>{CONFLICT_STRATEGIES.find(s => s.key === importConflictStrategy)?.label || '跳过重复'}</strong>
                   </div>
                 </div>
 
                 {#if importPreview.events.length > 0}
-                  <h3 class="importSectionTitle">📅 将要新增的活动</h3>
+                  <h3 class="importSectionTitle">📅 新增活动 ({importPreview.events.length})</h3>
                   <div class="importPreviewList">
                     {#each importPreview.events as ev}
-                      <div class="importPreviewItem">
+                      <div class="importPreviewItem newEvent">
+                        <span class="importBadge new">NEW</span>
                         <strong>{ev.book}</strong>
-                        <span class="importItemMeta">默认时间：{ev.time.replace('T', ' ')} · 人数上限：{ev.limit}</span>
+                        <span class="importItemMeta">默认时间：{ev.time.replace('T', ' ')} · 人数上限：{ev.limit} · 可在活动管理中修改</span>
                       </div>
                     {/each}
                   </div>
                 {/if}
 
                 {#if importPreview.signups.length > 0}
-                  <h3 class="importSectionTitle">👥 将要新增的报名记录</h3>
+                  <h3 class="importSectionTitle">👥 新增报名记录 ({importPreview.signups.length})</h3>
                   <div class="importPreviewTableWrap">
                     <table class="importPreviewTable">
                       <thead>
@@ -1354,23 +1532,95 @@
                   </div>
                 {/if}
 
+                {#if importPreview.updates.length > 0}
+                  <h3 class="importSectionTitle">🔄 将更新的报名记录 ({importPreview.updates.length})</h3>
+                  <div class="importPreviewTableWrap">
+                    <table class="importPreviewTable updateTable">
+                      <thead>
+                        <tr>
+                          <th>行号</th>
+                          <th>活动</th>
+                          <th>姓名</th>
+                          <th>手机</th>
+                          <th>更新方式</th>
+                          <th>变更内容</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {#each importPreview.updates.slice(0, 50) as up}
+                          <tr>
+                            <td>{up._lineNum}</td>
+                            <td>{up._eventBook}</td>
+                            <td>{up.name}</td>
+                            <td>{up.phone}</td>
+                            <td>
+                              <span class="updateStrategyTag">{up.strategy === 'overwrite' ? '覆盖全字段' : up.strategy === 'checkinOnly' ? '仅补签到' : '更新'}</span>
+                            </td>
+                            <td class="changeDetailCell">
+                              {#if up.strategy === 'checkinOnly'}
+                                {#if up.updates.checkedIn !== up.original.checkedIn}
+                                  <span class="changeItem">签到：{up.original.checkedIn ? '已到场→未到场' : '未到场→已到场'}</span>
+                                {/if}
+                                {#if up.updates.checkedInAt !== up.original.checkedInAt}
+                                  <span class="changeItem">签到时间：{up.original.checkedInAt || '-'} → {up.updates.checkedInAt || '-'}</span>
+                                {/if}
+                              {:else}
+                                {#if up.updates.answer !== up.original.answer}
+                                  <span class="changeItem">回答变更</span>
+                                {/if}
+                                {#if up.updates.status !== up.original.status}
+                                  <span class="changeItem">类型：{up.original.status} → {up.updates.status}</span>
+                                {/if}
+                                {#if up.updates.reviewStatus !== up.original.reviewStatus}
+                                  <span class="changeItem">审核：{up.original.reviewStatus} → {up.updates.reviewStatus}</span>
+                                {/if}
+                                {#if up.updates.checkedIn !== up.original.checkedIn}
+                                  <span class="changeItem">签到：{up.original.checkedIn ? '已→未' : '未→已'}</span>
+                                {/if}
+                              {/if}
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                    {#if importPreview.updates.length > 50}
+                      <p class="importMoreHint">... 还有 {importPreview.updates.length - 50} 条更新记录未显示</p>
+                    {/if}
+                  </div>
+                {/if}
+
                 {#if importPreview.duplicates.length > 0}
-                  <h3 class="importSectionTitle">⚠️ 重复记录（将被跳过）</h3>
+                  <h3 class="importSectionTitle">⚠️ 跳过/重复记录 ({importPreview.duplicates.length})</h3>
                   <div class="importPreviewList">
-                    {#each importPreview.duplicates as dp}
-                      <div class="importPreviewItem duplicate">
+                    {#each importPreview.duplicates.slice(0, 50) as dp}
+                      <div class="importPreviewItem duplicate" class:csvdup={dp.conflictType === 'csv_duplicate'}>
                         <span class="importItemLine">第{dp.line}行</span>
+                        {#if dp.conflictType === 'csv_duplicate'}
+                          <span class="importBadge dup">CSV内重复</span>
+                        {:else if dp.conflictType === 'existing_skip'}
+                          <span class="importBadge skip">已跳过</span>
+                        {:else}
+                          <span class="importBadge info">无变化</span>
+                        {/if}
                         <strong>{dp.name}</strong>
                         <span class="importItemMeta">{dp.book} · {dp.phone} · {dp.reason}</span>
                       </div>
                     {/each}
                   </div>
+                  {#if importPreview.duplicates.length > 50}
+                    <p class="importMoreHint">... 还有 {importPreview.duplicates.length - 50} 条重复记录未显示</p>
+                  {/if}
                 {/if}
 
+                <div class="readerImportNote">
+                  💡 导入完成后，将自动为有手机号的报名记录<strong>创建或关联读者档案</strong>，使用姓名更新档案信息，用报名回答填充历史备注。
+                </div>
+
                 <div class="importConfirmActions">
-                  <button on:click={confirmImport} disabled={importPreview.signups.length === 0 && importPreview.events.length === 0}>
-                    确认导入
+                  <button on:click={confirmImport} disabled={importPreview.signups.length === 0 && importPreview.events.length === 0 && importPreview.updates.length === 0}>
+                    {importPreview.updates.length > 0 ? '确认导入并更新' : '确认导入'}
                   </button>
+                  <button type="button" class="ghost" on:click={openMappingStep}>调整字段映射</button>
                   <button type="button" class="ghost" on:click={cancelImport}>取消</button>
                 </div>
               </section>
@@ -1719,10 +1969,16 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .importErrorTitle { margin: 0 0 10px; color: #721c24; font-size: 16px; }
 .importErrorList { margin: 0; padding-left: 20px; color: #721c24; font-size: 14px; }
 .importErrorList li { margin-bottom: 4px; }
-.importStats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.importStats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
 .importStatItem { background: #f8f5ee; border: 1px solid #e1d8ca; border-radius: 8px; padding: 14px; text-align: center; }
 .importStatItem strong { display: block; font-size: 28px; color: #4b4435; }
 .importStatItem span { display: block; font-size: 13px; color: #6b6459; margin-top: 4px; }
+.importStatItem.success { background: #e6f4ea; border-color: #b7dfbf; }
+.importStatItem.success strong { color: #1e7e34; }
+.importStatItem.success span { color: #145524; }
+.importStatItem.info { background: #e3f0fd; border-color: #b3d7f5; }
+.importStatItem.info strong { color: #0056b3; }
+.importStatItem.info span { color: #003d80; }
 .importStatItem.warn { background: #fff8ee; border-color: #ffcc80; }
 .importStatItem.warn strong { color: #b36b00; }
 .importStatItem.warn span { color: #995a00; }
@@ -1733,6 +1989,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .importPreviewList { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .importPreviewItem { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #fffaf2; border: 1px solid #e3dacb; border-radius: 6px; flex-wrap: wrap; }
 .importPreviewItem.duplicate { background: #fff8ee; border-color: #ffcc80; }
+.importPreviewItem.duplicate.csvdup { background: #fff5f5; border-color: #f5c6cb; }
+.importPreviewItem.newEvent { background: #e6f4ea; border-color: #b7dfbf; }
 .importPreviewItem strong { font-size: 14px; }
 .importItemLine { display: inline-block; padding: 2px 8px; background: #efe7d8; color: #7b6b4e; border-radius: 10px; font-size: 12px; font-weight: 600; }
 .importItemMeta { font-size: 13px; color: #6b6459; }
@@ -1744,6 +2002,61 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .importMoreHint { margin: 8px 0 0; text-align: center; color: #999; font-size: 13px; }
 .importConfirmActions { display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px dashed #e3dacb; }
 .importConfirmActions button { flex: 1; }
+
+.previewSummaryBar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.previewSummaryBar .importStats { flex: 1; min-width: 0; margin-bottom: 0; }
+.conflictSummaryTag { flex-shrink: 0; padding: 8px 14px; background: #efe7d8; border-radius: 8px; font-size: 13px; color: #7b6b4e; white-space: nowrap; }
+.conflictSummaryTag strong { color: #4b4435; }
+
+.importBadge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
+.importBadge.new { background: #1e7e34; color: #fff; }
+.importBadge.dup { background: #a33; color: #fff; }
+.importBadge.skip { background: #b36b00; color: #fff; }
+.importBadge.info { background: #0056b3; color: #fff; }
+
+.mappingPanel { background: #fff; }
+.mappingHint { margin: 0 0 14px; padding: 10px 12px; background: #e3f0fd; border: 1px solid #b3d7f5; border-radius: 8px; color: #003d80; font-size: 13px; line-height: 1.6; }
+.requiredStar { color: #d32f2f; font-weight: 700; margin-left: 2px; }
+.requiredField { color: #4b4435; font-weight: 600; }
+
+.sampleDataHint { margin-bottom: 16px; padding: 12px; background: #f8f5ee; border: 1px solid #e1d8ca; border-radius: 8px; }
+.sampleDataHint strong { display: block; margin-bottom: 8px; font-size: 13px; color: #4b4435; }
+.sampleTableWrap { overflow-x: auto; }
+.sampleTable { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
+.sampleTable th, .sampleTable td { padding: 6px 10px; border: 1px solid #e1d8ca; text-align: left; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sampleTable th { background: #efe7d8; color: #7b6b4e; font-weight: 600; }
+.sampleTable th small { display: block; font-weight: 400; color: #6b6459; margin-top: 2px; }
+
+.mappingGrid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.mappingRow { display: grid; grid-template-columns: 220px 1fr; gap: 12px; align-items: center; padding: 10px 12px; background: #f8f5ee; border-radius: 8px; border: 1px solid #e1d8ca; }
+.mappingFieldLabel { display: flex; flex-direction: column; gap: 2px; }
+.mappingFieldLabel .fieldHint { font-size: 11px; color: #8a7f6a; line-height: 1.4; }
+.mappingFieldLabel span:first-child { font-size: 14px; }
+.mappingRequired { border-color: #f5c6cb; background: #fff5f5; }
+
+.conflictStrategySection { margin-bottom: 16px; padding: 14px; background: #fffaf2; border: 1px solid #e3dacb; border-radius: 8px; }
+.importSubTitle { margin: 0 0 8px; font-size: 14px; color: #4b4435; display: flex; align-items: center; gap: 6px; }
+.conflictHint { margin: 0 0 12px; font-size: 13px; color: #6b6459; }
+.conflictOptions { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+.conflictOption { display: flex; cursor: pointer; margin: 0; }
+.conflictOption input { margin-right: 10px; margin-top: 3px; flex-shrink: 0; }
+.conflictOptionContent { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.conflictOptionContent strong { font-size: 13px; color: #4b4435; }
+.conflictOptionContent span { font-size: 12px; color: #8a7f6a; line-height: 1.5; }
+.conflictOption { padding: 10px 12px; background: #fff; border: 2px solid #e1d8ca; border-radius: 8px; transition: all 0.15s; }
+.conflictOption:hover { border-color: #c4b99e; background: #f8f5ee; }
+.conflictActive { border-color: #7b6b4e !important; background: #efe7d8 !important; }
+.conflictActive .conflictOptionContent strong { color: #4b4435; }
+
+.mappingActions { margin-top: 8px; }
+
+.updateTable .changeDetailCell { min-width: 240px; }
+.changeDetailCell { display: flex; flex-direction: column; gap: 4px; }
+.changeItem { display: inline-block; padding: 2px 8px; background: #fff3e0; color: #b36b00; border-radius: 10px; font-size: 12px; margin-right: 4px; }
+.updateStrategyTag { display: inline-block; padding: 3px 10px; background: #e3f0fd; color: #0056b3; border-radius: 10px; font-size: 12px; font-weight: 600; }
+
+.readerImportNote { margin-top: 16px; padding: 12px 14px; background: #e6f4ea; border: 1px solid #b7dfbf; border-radius: 8px; font-size: 13px; color: #145524; line-height: 1.6; }
+.readerImportNote strong { color: #1e7e34; }
 
 .printListBtn { display: inline-flex; align-items: center; gap: 6px; }
 
