@@ -14,7 +14,6 @@
   } from '$lib/utils/signupUtils.js';
   import {
     buildFullPublicUrl,
-    buildPublicEventUrl,
     copyToClipboard,
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
@@ -810,6 +809,12 @@
     publicLinkTargetSeriesId = '';
   }
 
+  function handleModalOverlayClick(event) {
+    if (event.target === event.currentTarget) {
+      closePublicLinkModal();
+    }
+  }
+
   async function handleCopyLink(text, id) {
     try {
       await copyToClipboard(text);
@@ -1561,8 +1566,8 @@
   </section>
 
   {#if showPublicLinkModal}
-    <div class="modalOverlay" role="dialog" aria-modal="true" aria-label="活动公开报名链接" on:click={closePublicLinkModal} on:keydown={(e) => { if (e.key === 'Escape') closePublicLinkModal(); }}>
-      <div class="modalContent" role="document" on:click={(e) => e.stopPropagation()}>
+    <div class="modalOverlay" role="dialog" aria-modal="true" aria-label="活动公开报名链接" tabindex="0" on:click={handleModalOverlayClick} on:keydown={(e) => { if (e.key === 'Escape') closePublicLinkModal(); }}>
+      <div class="modalContent" role="document">
         <div class="modalHeader">
           <h2><Share2 size={18} />活动公开报名链接</h2>
           <button class="modalClose" on:click={closePublicLinkModal}><X size={18} /></button>

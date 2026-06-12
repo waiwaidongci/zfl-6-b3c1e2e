@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Layers, Users, UserCheck } from 'lucide-svelte';
+  import { Layers, UserCheck } from 'lucide-svelte';
   import {
     readAllStore,
     writeSignups,
