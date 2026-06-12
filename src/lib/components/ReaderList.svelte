@@ -1,12 +1,15 @@
 <script>
-  import { Search, ChevronRight, UserCog, Calendar, Clock, Award, X } from 'lucide-svelte';
+  import { Search, ChevronRight, UserCog, Calendar, Clock, Award, X, Tag } from 'lucide-svelte';
 
   export let readerStats = [];
   export let searchKeyword = '';
   export let sortBy = 'lastActive';
+  export let availableTags = [];
+  export let selectedTags = [];
   export let onSearch;
   export let onSort;
   export let onSelectReader;
+  export let onToggleTag;
 
   const sortOptions = [
     { value: 'lastActive', label: '最近活跃' },
@@ -19,6 +22,10 @@
   function formatTime(timeStr) {
     if (!timeStr) return '';
     return timeStr.replace('T', ' ');
+  }
+
+  function isTagSelected(tag) {
+    return selectedTags.includes(tag);
   }
 </script>
 
@@ -48,6 +55,30 @@
         </select>
       </div>
     </div>
+    {#if availableTags.length > 0}
+      <div class="tagFilterSection">
+        <div class="tagFilterLabel">
+          <Tag size={14} /> 标签筛选：
+        </div>
+        <div class="tagFilterList">
+          {#each availableTags as tag}
+            <button
+              type="button"
+              class="tagFilterChip"
+              class:selected={isTagSelected(tag)}
+              on:click={() => onToggleTag(tag)}
+            >
+              {tag}
+            </button>
+          {/each}
+          {#if selectedTags.length > 0}
+            <button type="button" class="tagFilterClear" on:click={() => selectedTags.forEach(t => onToggleTag(t))}>
+              清除筛选
+            </button>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </div>
 
   {#if readerStats.length === 0}
@@ -67,6 +98,16 @@
             <div class="readerInfo">
               <strong>{item.reader.name || '未命名读者'}</strong>
               <span class="readerPhone">{item.reader.phone || '无电话'}</span>
+              {#if item.reader.tags && item.reader.tags.length > 0}
+                <div class="readerCardTags">
+                  {#each item.reader.tags.slice(0, 5) as tag}
+                    <span class="readerTagChip">{tag}</span>
+                  {/each}
+                  {#if item.reader.tags.length > 5}
+                    <span class="readerTagMore">+{item.reader.tags.length - 5}</span>
+                  {/if}
+                </div>
+              {/if}
               {#if item.reader.note}
                 <p class="readerNote">{item.reader.note}</p>
               {/if}
@@ -167,6 +208,86 @@
   .readerFilters select {
     width: auto;
     min-width: 140px;
+  }
+
+  .tagFilterSection {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #e8ddc8;
+  }
+
+  .tagFilterLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #6b6459;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+
+  .tagFilterList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .tagFilterChip {
+    padding: 4px 12px;
+    background: #f8f5ee;
+    border: 1px solid #d7ccba;
+    border-radius: 14px;
+    font-size: 12px;
+    color: #6b6459;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .tagFilterChip:hover {
+    background: #efe7d8;
+    border-color: #c4b99a;
+  }
+
+  .tagFilterChip.selected {
+    background: #7b6b4e;
+    border-color: #7b6b4e;
+    color: #fff;
+  }
+
+  .tagFilterClear {
+    padding: 4px 10px;
+    background: transparent;
+    border: none;
+    color: #8a7f6a;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .tagFilterClear:hover {
+    color: #4b4435;
+  }
+
+  .readerCardTags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0;
+  }
+
+  .readerTagChip {
+    padding: 2px 8px;
+    background: #efe7d8;
+    border-radius: 10px;
+    font-size: 11px;
+    color: #7b6b4e;
+  }
+
+  .readerTagMore {
+    padding: 2px 6px;
+    font-size: 11px;
+    color: #999;
   }
 
   .emptyReaders {

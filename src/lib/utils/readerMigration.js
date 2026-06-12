@@ -1,4 +1,4 @@
-import { createReader, normalizeReader, findReaderByPhone, upsertReader } from './readerStore.js';
+import { createReader, normalizeReader, findReaderByPhone, upsertReader, normalizeTags } from './readerStore.js';
 
 const MIGRATION_FLAG_KEY = 'zfl-6-readers-migrated';
 
@@ -70,14 +70,20 @@ export function migrateReadersFromSignups(existingReaders, signups) {
     } else {
       const updatedName = pickLatestName(existingReader, latestSignup.name);
       const updatedNote = pickBestNote(existingReader, latestSignup.answer);
+      const normalizedTags = normalizeTags(existingReader.tags || []);
 
-      if (updatedName !== existingReader.name || updatedNote !== existingReader.note) {
+      if (
+        updatedName !== existingReader.name ||
+        updatedNote !== existingReader.note ||
+        JSON.stringify(normalizedTags) !== JSON.stringify(existingReader.tags || [])
+      ) {
         readers = readers.map((r) =>
           r.id === existingReader.id
             ? {
                 ...r,
                 name: updatedName,
                 note: updatedNote,
+                tags: normalizedTags,
                 updatedAt: latestSignup.createdAt || r.updatedAt
               }
             : r

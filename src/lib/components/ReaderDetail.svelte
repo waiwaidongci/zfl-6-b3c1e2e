@@ -1,13 +1,16 @@
 <script>
-  import { ArrowLeft, Calendar, UserCheck, XCircle, Clock, Award, MessageSquare, Edit3, Check, X } from 'lucide-svelte';
+  import { ArrowLeft, Calendar, UserCheck, XCircle, Clock, Award, MessageSquare, Edit3, Check, X, Tag, Plus } from 'lucide-svelte';
 
   export let reader;
   export let stats;
   export let onBack;
   export let onUpdateNote;
+  export let onAddTag;
+  export let onRemoveTag;
 
   let editingNote = false;
   let noteDraft = '';
+  let newTagInput = '';
 
   function startEditNote() {
     noteDraft = reader.note || '';
@@ -22,6 +25,20 @@
   function cancelEditNote() {
     editingNote = false;
     noteDraft = '';
+  }
+
+  function handleAddTag() {
+    const tag = newTagInput.trim();
+    if (!tag) return;
+    onAddTag(tag);
+    newTagInput = '';
+  }
+
+  function handleTagKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
+    }
   }
 
   function formatTime(timeStr) {
@@ -65,6 +82,37 @@
           首次报名：{formatTime(reader.createdAt)} ·
           最近更新：{formatTime(reader.updatedAt)}
         </p>
+      </div>
+    </div>
+
+    <div class="tagsSection">
+      <div class="tagsHeader">
+        <h3><Tag size={16} /> 标签</h3>
+      </div>
+      <div class="tagsList">
+        {#if reader.tags && reader.tags.length > 0}
+          {#each reader.tags as tag}
+            <span class="tagChip">
+              {tag}
+              <button class="tagRemove" on:click={() => onRemoveTag(tag)} title="删除标签">
+                <X size={12} />
+              </button>
+            </span>
+          {/each}
+        {:else}
+          <span class="emptyTags">暂无标签</span>
+        {/if}
+      </div>
+      <div class="tagInputRow">
+        <input
+          type="text"
+          bind:value={newTagInput}
+          placeholder="输入新标签，按回车添加"
+          on:keydown={handleTagKeydown}
+        />
+        <button class="ghost addTagBtn" on:click={handleAddTag} disabled={!newTagInput.trim()}>
+          <Plus size={14} /> 添加
+        </button>
       </div>
     </div>
 
@@ -249,6 +297,86 @@
     margin: 0;
     font-size: 12px;
     color: #999;
+  }
+
+  .tagsSection {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #e8ddc8;
+  }
+
+  .tagsHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .tagsHeader h3 {
+    margin: 0;
+    font-size: 15px;
+    color: #4b4435;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .tagsList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .tagChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 5px 12px;
+    background: #efe7d8;
+    border: 1px solid #d7ccba;
+    border-radius: 16px;
+    font-size: 13px;
+    color: #4b4435;
+  }
+
+  .tagRemove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #8a7f6a;
+    transition: all 0.15s;
+  }
+
+  .tagRemove:hover {
+    background: #d7ccba;
+    color: #2a2822;
+  }
+
+  .emptyTags {
+    color: #999;
+    font-size: 13px;
+  }
+
+  .tagInputRow {
+    display: flex;
+    gap: 8px;
+  }
+
+  .tagInputRow input {
+    flex: 1;
+  }
+
+  .addTagBtn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .noteSection {

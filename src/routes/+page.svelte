@@ -22,11 +22,18 @@
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
   import { loadAllData, saveAllData } from '$lib/utils/dataStore.js';
-  import { findReaderByPhone, updateReader } from '$lib/utils/readerStore.js';
+  import {
+    findReaderByPhone,
+    updateReader,
+    addTagToReader,
+    removeTagFromReader,
+    getAllTags
+  } from '$lib/utils/readerStore.js';
   import {
     getReaderStats,
     getAllReadersStats,
-    sortReadersByActivity
+    sortReadersByActivity,
+    filterReaderStatsByTags
   } from '$lib/utils/readerStats.js';
   import { previewImport as csvPreviewImport, applyImport } from '$lib/utils/csvTools.js';
   import {
@@ -104,6 +111,7 @@
   let selectedReaderId = '';
   let readerSearchKeyword = '';
   let readerSortBy = 'lastActive';
+  let readerSelectedTags = [];
   let migrationStats = null;
 
   let pendingNavigateTarget = null;
@@ -167,16 +175,27 @@
   }
 
   $: allReaderStats = getAllReadersStats(readers, signups, events);
+  $: allAvailableTags = getAllTags(readers);
   $: sortedReaderStats = sortReadersByActivity(allReaderStats, readerSortBy);
-  $: filteredReaderStats = sortedReaderStats.filter((item) => {
+  $: tagFilteredReaderStats = filterReaderStatsByTags(sortedReaderStats, readerSelectedTags);
+  $: filteredReaderStats = tagFilteredReaderStats.filter((item) => {
     if (!readerSearchKeyword.trim()) return true;
     const kw = readerSearchKeyword.trim().toLowerCase();
     return (
       item.reader.name.toLowerCase().includes(kw) ||
       item.reader.phone.includes(kw) ||
-      item.reader.note.toLowerCase().includes(kw)
+      item.reader.note.toLowerCase().includes(kw) ||
+      (item.reader.tags || []).some((t) => t.toLowerCase().includes(kw))
     );
   });
+
+  function handleToggleTag(tag) {
+    if (readerSelectedTags.includes(tag)) {
+      readerSelectedTags = readerSelectedTags.filter((t) => t !== tag);
+    } else {
+      readerSelectedTags = [...readerSelectedTags, tag];
+    }
+  }
   $: selectedReader = readers.find((r) => r.id === selectedReaderId) || null;
   $: selectedReaderStats = selectedReader ? getReaderStats(selectedReader.id, signups, events) : null;
 
@@ -743,6 +762,13 @@
             {#if matchedReaderInfo}
               <div class="readerMatchNotice">
                 <span>👤 已识别老读者：{matchedReaderInfo.name}</span>
+                {#if matchedReaderInfo.tags && matchedReaderInfo.tags.length > 0}
+                  <div class="readerMatchTags">
+                    {#each matchedReaderInfo.tags as tag}
+                      <span class="readerMatchTag">{tag}</span>
+                    {/each}
+                  </div>
+                {/if}
                 {#if matchedReaderInfo.note}
                   <span class="readerNote">历史备注：{matchedReaderInfo.note}</span>
                 {/if}
@@ -1012,6 +1038,7 @@
                 <h3 class="signupSectionTitle pendingSectionTitle">待审核 ({pendingCount})</h3>
                 <div class="signupList">
                   {#each selectedPendingSignups as item}
+                    {@const pendingReader = item.readerId ? readers.find(r => r.id === item.readerId) : findReaderByPhone(readers, item.phone)}
                     <article class="pending-card">
                       {#if rejectingSignupId === item.id}
                         <div class="rejectForm">
@@ -1027,6 +1054,16 @@
                           <div>
                             <strong>{item.name}</strong>
                             <span>{item.phone} · {item.createdAt}</span>
+                            {#if pendingReader && pendingReader.tags && pendingReader.tags.length > 0}
+                              <div class="pendingReaderTags">
+                                {#each pendingReader.tags.slice(0, 3) as tag}
+                                  <span class="pendingTagChip">{tag}</span>
+                                {/each}
+                                {#if pendingReader.tags.length > 3}
+                                  <span class="pendingTagMore">+{pendingReader.tags.length - 3}</span>
+                                {/if}
+                              </div>
+                            {/if}
                             <p>{item.answer}</p>
                           </div>
                           <span class="status-badge pending">待审核</span>
@@ -1182,15 +1219,24 @@
                 onUpdateNote={(note) => {
                   readers = updateReader(readers, selectedReader.id, { note });
                 }}
+                onAddTag={(tag) => {
+                  readers = addTagToReader(readers, selectedReader.id, tag);
+                }}
+                onRemoveTag={(tag) => {
+                  readers = removeTagFromReader(readers, selectedReader.id, tag);
+                }}
               />
             {:else}
               <ReaderList
                 readerStats={filteredReaderStats}
                 searchKeyword={readerSearchKeyword}
                 sortBy={readerSortBy}
+                availableTags={allAvailableTags}
+                selectedTags={readerSelectedTags}
                 onSearch={(kw) => readerSearchKeyword = kw}
                 onSort={(sort) => readerSortBy = sort}
                 onSelectReader={(id) => { selectedReaderId = id; }}
+                onToggleTag={handleToggleTag}
               />
             {/if}
           </section>
@@ -1633,6 +1679,11 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 .readerMatchNotice { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: #e6f4ea; border: 1px solid #b7dfbf; border-radius: 8px; color: #1e7e34; font-size: 13px; }
 .readerMatchNotice .readerNote { color: #2d6a3b; font-size: 12px; }
+.readerMatchTags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px 0; }
+.readerMatchTag { display: inline-block; padding: 2px 8px; background: #d4edda; border-radius: 10px; font-size: 11px; color: #1e7e34; }
+.pendingReaderTags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.pendingTagChip { display: inline-block; padding: 2px 8px; background: #fff3cd; border: 1px solid #ffe082; border-radius: 10px; font-size: 11px; color: #856404; }
+.pendingTagMore { display: inline-block; padding: 2px 6px; font-size: 11px; color: #999; }
 
 .migrationNotice { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: #e6f4ea; border: 1px solid #b7dfbf; border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .migrationNotice strong { color: #1e7e34; font-size: 15px; }

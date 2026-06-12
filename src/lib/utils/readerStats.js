@@ -1,5 +1,40 @@
+import { normalizeTags } from './readerStore.js';
+
 export function getReaderSignups(readerId, signups) {
   return signups.filter((s) => s.readerId === readerId);
+}
+
+export function getAllTagsFromReaders(readers) {
+  const tagSet = new Set();
+  for (const r of readers) {
+    const tags = normalizeTags(r.tags || []);
+    for (const t of tags) {
+      tagSet.add(t);
+    }
+  }
+  return Array.from(tagSet).sort();
+}
+
+export function getTagCounts(readers) {
+  const counts = new Map();
+  for (const r of readers) {
+    const tags = normalizeTags(r.tags || []);
+    for (const t of tags) {
+      counts.set(t, (counts.get(t) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function filterReaderStatsByTags(readerStats, tags) {
+  const normalizedFilterTags = normalizeTags(tags);
+  if (normalizedFilterTags.length === 0) return readerStats;
+  return readerStats.filter((item) => {
+    const readerTags = normalizeTags(item.reader.tags || []);
+    return normalizedFilterTags.every((ft) => readerTags.includes(ft));
+  });
 }
 
 export function getReaderEvents(readerId, signups, events) {
