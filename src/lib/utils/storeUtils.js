@@ -173,6 +173,50 @@ export function getSeriesEvents(events, seriesId) {
     .sort((a, b) => a.time.localeCompare(b.time));
 }
 
+export function getSeriesById(series, seriesId) {
+  if (!seriesId) return null;
+  return series.find((s) => s.id === seriesId) || null;
+}
+
+export function isValidSeriesId(series, seriesId) {
+  if (!seriesId || typeof seriesId !== 'string') return false;
+  return series.some((s) => s.id === seriesId);
+}
+
+export function getSeriesStatsSummary(events, signups, seriesId) {
+  const sEvents = getSeriesEvents(events, seriesId);
+  if (sEvents.length === 0) {
+    return {
+      eventCount: 0,
+      totalSeats: 0,
+      totalRegular: 0,
+      totalWaitlist: 0,
+      openCount: 0,
+      closedCount: 0
+    };
+  }
+  let totalSeats = 0;
+  let totalRegular = 0;
+  let totalWaitlist = 0;
+  let openCount = 0;
+  let closedCount = 0;
+  for (const ev of sEvents) {
+    totalSeats += Number(ev.limit) || 0;
+    totalRegular += getRegularSignupCount(signups, ev.id);
+    totalWaitlist += getWaitlistCount(signups, ev.id);
+    if (ev.status === '开放报名') openCount++;
+    else closedCount++;
+  }
+  return {
+    eventCount: sEvents.length,
+    totalSeats,
+    totalRegular,
+    totalWaitlist,
+    openCount,
+    closedCount
+  };
+}
+
 export function getEventIndexInSeries(events, eventId) {
   const event = getEventById(events, eventId);
   if (!event || !event.seriesId) return 0;

@@ -7,9 +7,31 @@ export function buildPublicEventUrl(eventId, baseUrl = '') {
   return path;
 }
 
+export function buildPublicSeriesUrl(seriesId, baseUrl = '') {
+  const path = `/public/series/${encodeURIComponent(seriesId)}`;
+  if (baseUrl) {
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    return `${cleanBase}${path}`;
+  }
+  return path;
+}
+
 export function getEventIdFromUrl(pathname) {
   if (!pathname) return null;
   const match = pathname.match(/^\/public\/([^/]+)/);
+  if (match) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (e) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+export function getSeriesIdFromUrl(pathname) {
+  if (!pathname) return null;
+  const match = pathname.match(/^\/public\/series\/([^/]+)/);
   if (match) {
     try {
       return decodeURIComponent(match[1]);
@@ -29,6 +51,10 @@ export function buildCurrentBaseUrl() {
 
 export function buildFullPublicUrl(eventId) {
   return buildPublicEventUrl(eventId, buildCurrentBaseUrl());
+}
+
+export function buildFullPublicSeriesUrl(seriesId) {
+  return buildPublicSeriesUrl(seriesId, buildCurrentBaseUrl());
 }
 
 export function copyToClipboard(text) {

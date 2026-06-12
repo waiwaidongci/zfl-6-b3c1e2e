@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick, afterUpdate } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2, UserCog, Search } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2, UserCog, Search, Bookmark } from 'lucide-svelte';
   import SignupPrintView from '$lib/components/SignupPrintView.svelte';
   import ReaderList from '$lib/components/ReaderList.svelte';
   import ReaderDetail from '$lib/components/ReaderDetail.svelte';
@@ -17,6 +17,7 @@
   } from '$lib/utils/signupUtils.js';
   import {
     buildFullPublicUrl,
+    buildFullPublicSeriesUrl,
     copyToClipboard,
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
@@ -1369,6 +1370,7 @@
             {@const targetSeries = series.find((s) => s.id === publicLinkTargetSeriesId)}
             {@const seriesLinks = targetSeries ? getSeriesPublicEventLinks(events, targetSeries.id) : []}
             {#if targetSeries}
+              {@const seriesPageUrl = buildFullPublicSeriesUrl(targetSeries.id)}
               <div class="linkCard">
                 <div class="linkCardHead">
                   <Layers size={16} />
@@ -1378,6 +1380,27 @@
                     <p class="seriesLinkDesc">{targetSeries.description}</p>
                   {/if}
                 </div>
+                <div class="seriesPageLinkSection">
+                  <div class="seriesPageLinkLabel">
+                    <Bookmark size={14} /> 系列总览页（推荐分享）
+                  </div>
+                  <div class="linkRow">
+                    <input readonly value={seriesPageUrl} />
+                    <button class="ghost copyBtn" on:click={() => handleCopyLink(seriesPageUrl, `series-${targetSeries.id}`)}>
+                      {#if copiedLinkId === `series-${targetSeries.id}`}
+                        <CheckCircle2 size={16} /> 已复制
+                      {:else}
+                        <Copy size={16} /> 复制
+                      {/if}
+                    </button>
+                    <button class="ghost previewBtn" on:click={() => previewPublicPage(seriesPageUrl)}>
+                      <ExternalLink size={16} /> 预览
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="seriesSectionDivider">
+                <span>单场报名链接</span>
               </div>
               {#if seriesLinks.length === 0}
                 <p class="empty empty-small">该系列下暂无活动</p>
@@ -1817,6 +1840,47 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 }
 
 .opsSection { display: grid; gap: 16px; }
+
+.seriesPageLinkSection {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e3dacb;
+}
+
+.seriesPageLinkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7b6b4e;
+  background: #efe7d8;
+  padding: 3px 10px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.seriesSectionDivider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0 12px;
+  text-align: center;
+}
+
+.seriesSectionDivider::before,
+.seriesSectionDivider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #e3dacb;
+}
+
+.seriesSectionDivider span {
+  padding: 0 14px;
+  font-size: 12px;
+  color: #8a7f6a;
+  font-weight: 500;
+  background: #fff;
+}
 
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } }
 </style>
