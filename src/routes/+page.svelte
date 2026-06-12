@@ -1,9 +1,10 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick, afterUpdate } from 'svelte';
   import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2, UserCog, Search } from 'lucide-svelte';
   import SignupPrintView from '$lib/components/SignupPrintView.svelte';
   import ReaderList from '$lib/components/ReaderList.svelte';
   import ReaderDetail from '$lib/components/ReaderDetail.svelte';
+  import OpsDashboard from '$lib/components/OpsDashboard.svelte';
   import {
     getSignupsByEvent,
     getPendingSignups,
@@ -19,20 +20,27 @@
     copyToClipboard,
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
-  import { createSignup } from '$lib/utils/storeUtils.js';
-  import { readReaders, writeReaders, findReaderByPhone, updateReader } from '$lib/utils/readerStore.js';
-  import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
+  import { loadAllData, saveAllData } from '$lib/utils/dataStore.js';
+  import { findReaderByPhone, updateReader } from '$lib/utils/readerStore.js';
   import {
     getReaderStats,
     getAllReadersStats,
     sortReadersByActivity
   } from '$lib/utils/readerStats.js';
-
-  const iso = (offset = 0) => {
-    const date = new Date();
-    date.setDate(date.getDate() + offset);
-    return date.toISOString().slice(0, 10);
-  };
+  import { previewImport as csvPreviewImport, applyImport } from '$lib/utils/csvTools.js';
+  import {
+    toggleEventStatus as toggleEventStatusAction,
+    toggleCheckIn as toggleCheckInAction,
+    approveSignup as approveSignupAction,
+    rejectSignup as rejectSignupAction,
+    handleSignupSubmit,
+    handleSignupCancel,
+    processEventLimitChanges,
+    iso,
+    pad as padFn,
+    getCalendarData,
+    handleCalendarDayToggle
+  } from '$lib/utils/eventActions.js';
 
   const seedBooks = [
     { id: crypto.randomUUID(), title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
@@ -97,68 +105,50 @@
   let readerSortBy = 'lastActive';
   let migrationStats = null;
 
+  let pendingNavigateTarget = null;
+  let signupListContainer;
+
+  function scrollToSignupGroup(targetType) {
+    if (!signupListContainer) return;
+    const selectors = {
+      pending: '.pendingSectionTitle',
+      checkin: '.signupSectionTitle:not(.pendingSectionTitle):not(.waitlistSectionTitle):not(.rejectedSectionTitle)',
+      waitlist: '.waitlistSectionTitle',
+      rejected: '.rejectedSectionTitle',
+      regular: '.signupSectionTitle:not(.pendingSectionTitle):not(.waitlistSectionTitle):not(.rejectedSectionTitle)'
+    };
+    const selector = selectors[targetType] || selectors.regular;
+    requestAnimationFrame(() => {
+      const el = signupListContainer.querySelector(selector);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
+
+  afterUpdate(() => {
+    if (pendingNavigateTarget) {
+      scrollToSignupGroup(pendingNavigateTarget);
+      pendingNavigateTarget = null;
+    }
+  });
+
   onMount(() => {
-    const storedBooks = localStorage.getItem('zfl-6-books');
-    const storedEvents = localStorage.getItem('zfl-6-events');
-    const storedSignups = localStorage.getItem('zfl-6-signups');
-    const storedMyIds = localStorage.getItem('zfl-6-my-signup-ids');
-    const storedSeries = localStorage.getItem('zfl-6-series');
-    if (storedBooks) books = JSON.parse(storedBooks);
-    if (storedEvents) {
-      const parsed = JSON.parse(storedEvents);
-      events = parsed.map((item) => {
-        if (item.reviewRequired === undefined) {
-          return { ...item, reviewRequired: false };
-        }
-        return item;
-      });
-    }
-    if (storedSignups) {
-      const parsed = JSON.parse(storedSignups);
-      signups = parsed.map((item) => {
-        let updated = { ...item };
-        if (!updated.status) {
-          updated.status = '正式';
-          updated.waitlistPosition = undefined;
-        }
-        if (updated.reviewStatus === undefined) {
-          updated.reviewStatus = '已通过';
-          updated.rejectionReason = '';
-          updated.reviewedAt = '';
-        }
-        return updated;
-      });
-    }
-    if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
-    if (storedSeries) series = JSON.parse(storedSeries);
-
-    readers = readReaders();
-
-    if (!hasMigratedReaders() && signups.length > 0) {
-      const result = runFullMigration(readers, signups);
-      readers = result.readers;
-      signups = result.signups;
-      writeReaders(readers);
-      localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
-      markMigrationDone();
-      migrationStats = {
-        newReaders: result.newReaders,
-        updatedReaders: result.updatedReaders,
-        linkedCount: result.linkedCount
-      };
-    }
+    const loaded = loadAllData();
+    books = loaded.books.length > 0 ? loaded.books : seedBooks;
+    events = loaded.events.length > 0 ? loaded.events : seedEvents;
+    series = loaded.series.length > 0 ? loaded.series : seedSeries;
+    signups = loaded.signups;
+    mySignupIds = loaded.mySignupIds;
+    readers = loaded.readers;
+    migrationStats = loaded.migrationStats;
 
     selectedId = events[0]?.id || '';
     hydrated = true;
   });
 
   $: if (hydrated) {
-    localStorage.setItem('zfl-6-books', JSON.stringify(books));
-    localStorage.setItem('zfl-6-events', JSON.stringify(events));
-    localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
-    localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
-    localStorage.setItem('zfl-6-series', JSON.stringify(series));
-    writeReaders(readers);
+    saveAllData({ books, events, signups, mySignupIds, series, readers });
   }
 
   $: if (signupForm.phone && signupForm.phone.trim()) {
@@ -210,16 +200,12 @@
     return { ...s, events: sEvents };
   });
 
-  let lastEventLimits = {};
+  let lastEventLimitsRef = { current: {} };
   $: eventLimits = events.map((e) => `${e.id}:${e.limit}`).join('|');
   $: if (hydrated && eventLimits) {
-    events.forEach((event) => {
-      const currentLimit = Number(event.limit);
-      if (lastEventLimits[event.id] !== undefined && currentLimit > lastEventLimits[event.id]) {
-        promoteFromWaitlist(event.id);
-      }
-      lastEventLimits[event.id] = currentLimit;
-    });
+    const result = processEventLimitChanges(events, signups, true, lastEventLimitsRef);
+    signups = result.signups;
+    lastEventLimitsRef.current = result.lastLimits;
   }
 
   $: if (selectedBookId) {
@@ -245,15 +231,11 @@
     }
   }
 
-  $: todayStr = iso();
-  $: calFirstDay = new Date(calYear, calMonth, 1).getDay();
-  $: calDaysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  $: eventsByDate = events.reduce((acc, event) => {
-    const date = event.time.slice(0, 10);
-    if (!acc[date]) acc[date] = [];
-    acc[date].push(event);
-    return acc;
-  }, {});
+  $: calData = getCalendarData(events, calYear, calMonth);
+  $: todayStr = calData.todayStr;
+  $: calFirstDay = calData.calFirstDay;
+  $: calDaysInMonth = calData.calDaysInMonth;
+  $: eventsByDate = calData.eventsByDate;
 
   function getSeriesOfEvent(eventId) {
     const event = events.find((e) => e.id === eventId);
@@ -422,8 +404,7 @@
     editingBookId = '';
   }
 
-  function pad(n) { return String(n).padStart(2, '0'); }
-  function dateKey(day) { return `${calYear}-${pad(calMonth + 1)}-${pad(day)}`; }
+  function dateKey(day) { return `${calYear}-${padFn(calMonth + 1)}-${padFn(day)}`; }
   function prevMonth() {
     if (calMonth === 0) { calMonth = 11; calYear--; }
     else calMonth--;
@@ -435,115 +416,41 @@
     activeDate = '';
   }
   function toggleDay(day) {
-    const key = dateKey(day);
-    const dayEvents = eventsByDate[key];
-    if (!dayEvents || dayEvents.length === 0) return;
-    if (dayEvents.length === 1) {
-      selectedId = dayEvents[0].id;
-      activeDate = '';
-    } else {
-      activeDate = activeDate === key ? '' : key;
-    }
-  }
-
-  function promoteFromWaitlist(eventId, eventSource = events) {
-    const event = eventSource.find((e) => e.id === eventId);
-    if (!event) return;
-
-    const eventSignups = signups.filter((item) => item.eventId === eventId && item.reviewStatus === '已通过');
-    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-    const limit = Number(event.limit);
-
-    if (regularCount < limit) {
-      const waitlist = eventSignups
-        .filter((item) => item.status === '候补')
-        .sort((a, b) => a.waitlistPosition - b.waitlistPosition);
-
-      const spotsToFill = limit - regularCount;
-      const toPromote = waitlist.slice(0, spotsToFill);
-
-      if (toPromote.length > 0) {
-        signups = signups.map((item) => {
-          const promotee = toPromote.find((p) => p.id === item.id);
-          if (promotee) {
-            return { ...item, status: '正式', waitlistPosition: undefined, _wasWaitlisted: true };
-          }
-          if (item.eventId === eventId && item.status === '候补') {
-            const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
-            if (newPosition > 0) {
-              return { ...item, waitlistPosition: newPosition };
-            }
-          }
-          return item;
-        });
-      }
+    const result = handleCalendarDayToggle(eventsByDate, day, calYear, calMonth, selectedId, activeDate);
+    if (result.found) {
+      selectedId = result.selectedId;
+      activeDate = result.activeDate;
     }
   }
 
   function signup() {
     if (!selectedEvent || selectedEvent.status !== '开放报名' || !signupForm.name.trim()) return;
-
-    const result = createSignup(events, signups, selectedEvent.id, signupForm, readers);
+    const result = handleSignupSubmit(events, signups, readers, mySignupIds, selectedEvent.id, signupForm);
     if (result.success) {
       signups = result.signups;
       readers = result.readers;
-      mySignupIds = [...mySignupIds, result.signup.id];
+      mySignupIds = result.mySignupIds;
       signupForm = { name: '', phone: '', answer: '' };
       matchedReaderInfo = null;
     }
   }
 
   function cancelSignup(id) {
-    const signup = signups.find((item) => item.id === id);
-    signups = signups.filter((item) => item.id !== id);
-    mySignupIds = mySignupIds.filter((mid) => mid !== id);
-    if (signup && signup.status === '正式' && signup.reviewStatus === '已通过') {
-      promoteFromWaitlist(signup.eventId);
-    } else if (signup && signup.status === '候补' && signup.reviewStatus === '已通过') {
-      const eventSignups = signups.filter((item) => item.eventId === signup.eventId && item.status === '候补' && item.reviewStatus === '已通过');
-      signups = signups.map((item) => {
-        if (item.eventId === signup.eventId && item.status === '候补' && item.reviewStatus === '已通过' && item.waitlistPosition > signup.waitlistPosition) {
-          return { ...item, waitlistPosition: item.waitlistPosition - 1 };
-        }
-        return item;
-      });
-    }
+    const result = handleSignupCancel(events, signups, mySignupIds, id);
+    signups = result.signups;
+    mySignupIds = result.mySignupIds;
   }
 
   function toggleEventStatus(id) {
-    events = events.map((event) => event.id === id ? { ...event, status: event.status === '开放报名' ? '已关闭' : '开放报名' } : event);
+    events = toggleEventStatusAction(events, id);
   }
 
   function toggleCheckIn(id) {
-    const signup = signups.find((item) => item.id === id);
-    if (!signup || signup.status !== '正式' || signup.reviewStatus !== '已通过') return;
-    signups = signups.map((item) => item.id === id ? { ...item, checkedIn: !item.checkedIn, checkedInAt: !item.checkedIn ? new Date().toLocaleString() : '' } : item);
+    signups = toggleCheckInAction(signups, id);
   }
 
   function approveSignup(id) {
-    const signup = signups.find((item) => item.id === id);
-    if (!signup || signup.reviewStatus !== '待审核') return;
-
-    const event = events.find((e) => e.id === signup.eventId);
-    if (!event) return;
-
-    const eventSignups = signups.filter((item) => item.eventId === event.id && item.reviewStatus === '已通过');
-    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-    const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
-
-    let status = '正式';
-    let waitlistPosition = undefined;
-
-    if (regularCount >= Number(event.limit)) {
-      status = '候补';
-      waitlistPosition = waitlistCount + 1;
-    }
-
-    signups = signups.map((item) =>
-      item.id === id
-        ? { ...item, status, waitlistPosition, reviewStatus: '已通过', reviewedAt: new Date().toLocaleString() }
-        : item
-    );
+    signups = approveSignupAction(events, signups, id);
   }
 
   function startRejectSignup(id) {
@@ -557,260 +464,24 @@
   }
 
   function confirmRejectSignup() {
-    if (!rejectingSignupId || !rejectionReason.trim()) return;
-    signups = signups.map((item) =>
-      item.id === rejectingSignupId
-        ? { ...item, status: '已拒绝', reviewStatus: '已拒绝', rejectionReason: rejectionReason.trim(), reviewedAt: new Date().toLocaleString() }
-        : item
-    );
+    signups = rejectSignupAction(signups, rejectingSignupId, rejectionReason);
     rejectingSignupId = '';
     rejectionReason = '';
   }
 
-  function parseCsvLine(line) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        result.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current);
-    return result;
-  }
-
-  function parseCsv(text) {
-    const rows = [];
-    const rowLineNumbers = [];
-    let currentRow = [];
-    let currentField = '';
-    let inQuotes = false;
-    let currentLineNum = 1;
-    let i = 0;
-
-    while (i < text.length) {
-      const char = text[i];
-      const nextChar = text[i + 1];
-
-      if (char === '"') {
-        if (inQuotes && nextChar === '"') {
-          currentField += '"';
-          i += 2;
-        } else {
-          inQuotes = !inQuotes;
-          i++;
-        }
-      } else if (char === ',' && !inQuotes) {
-        currentRow.push(currentField);
-        currentField = '';
-        i++;
-      } else if ((char === '\n' || char === '\r') && !inQuotes) {
-        currentRow.push(currentField);
-        if (currentRow.some((cell) => cell.trim().length > 0)) {
-          rows.push(currentRow);
-          rowLineNumbers.push(currentLineNum);
-        }
-        currentRow = [];
-        currentField = '';
-        currentLineNum++;
-        if (char === '\r' && nextChar === '\n') {
-          i += 2;
-        } else {
-          i++;
-        }
-      } else {
-        if (char === '\n' || char === '\r') {
-          currentLineNum++;
-        }
-        currentField += char;
-        i++;
-      }
-    }
-
-    if (currentField.length > 0 || currentRow.length > 0) {
-      currentRow.push(currentField);
-      if (currentRow.some((cell) => cell.trim().length > 0)) {
-        rows.push(currentRow);
-        rowLineNumbers.push(currentLineNum);
-      }
-    }
-
-    if (rows.length === 0) return { headers: [], rows: [], rowLineNumbers: [] };
-    const headers = rows[0].map((h) => h.trim());
-    const dataRows = rows.slice(1).map((row) => row.map((c) => c.trim()));
-    const dataRowLineNumbers = rowLineNumbers.slice(1);
-    return { headers, rows: dataRows, rowLineNumbers: dataRowLineNumbers };
-  }
-
   function previewImport() {
-    if (!importCsvText.trim()) {
-      importPreview = null;
-      importErrors = ['请先粘贴CSV文本'];
-      importStats = null;
-      return;
-    }
-
-    const { headers, rows, rowLineNumbers } = parseCsv(importCsvText);
-    const errors = [];
-    const eventsToAdd = [];
-    const signupsToAdd = [];
-    const duplicates = [];
-
-    const headerMap = {};
-    headers.forEach((h, i) => { headerMap[h] = i; });
-
-    const requiredSignupHeaders = ['活动', '姓名', '手机'];
-    const missingHeaders = requiredSignupHeaders.filter((h) => !(h in headerMap));
-    if (missingHeaders.length > 0) {
-      errors.push(`缺少必要列：${missingHeaders.join('、')}`);
-    }
-
-    if (errors.length > 0) {
-      importPreview = null;
-      importErrors = errors;
-      importStats = null;
-      return;
-    }
-
-    const eventBookCache = {};
-    events.forEach((e) => { eventBookCache[e.book] = e; });
-
-    rows.forEach((row, idx) => {
-      const lineNum = rowLineNumbers[idx] || idx + 2;
-      const bookName = row[headerMap['活动']] || '';
-      const name = row[headerMap['姓名']] || '';
-      const phone = row[headerMap['手机']] || '';
-      const answer = headerMap['回答'] in row ? row[headerMap['回答']] : '';
-      const status = headerMap['报名类型'] in row ? row[headerMap['报名类型']] : '正式';
-      const reviewStatus = headerMap['审核状态'] in row ? row[headerMap['审核状态']] : '已通过';
-      const rejectionReason = headerMap['拒绝原因'] in row && row[headerMap['拒绝原因']] !== '-' ? row[headerMap['拒绝原因']] : '';
-      const createdAt = headerMap['报名时间'] in row && row[headerMap['报名时间']] !== '-' ? row[headerMap['报名时间']] : new Date().toLocaleString();
-      const reviewedAt = headerMap['审核时间'] in row && row[headerMap['审核时间']] !== '-' ? row[headerMap['审核时间']] : '';
-      const checkedIn = headerMap['签到状态'] in row ? row[headerMap['签到状态']] === '已到场' : false;
-      const checkedInAt = headerMap['签到时间'] in row && row[headerMap['签到时间']] !== '-' ? row[headerMap['签到时间']] : '';
-      const waitlistPosition = headerMap['候补顺序'] in row && row[headerMap['候补顺序']] !== '-' ? Number(row[headerMap['候补顺序']]) : undefined;
-
-      if (!bookName) {
-        errors.push(`第${lineNum}行：活动名称为空`);
-        return;
-      }
-      if (!name) {
-        errors.push(`第${lineNum}行：姓名为空`);
-        return;
-      }
-      if (!phone) {
-        errors.push(`第${lineNum}行：手机号为空`);
-        return;
-      }
-
-      let event = eventBookCache[bookName];
-      if (!event) {
-        if (!eventsToAdd.find((e) => e.book === bookName)) {
-          event = {
-            id: crypto.randomUUID(),
-            book: bookName,
-            author: '',
-            description: '',
-            host: '',
-            time: `${iso(7)}T19:30`,
-            limit: 20,
-            question: '',
-            status: '开放报名',
-            reviewRequired: false,
-            _isNew: true
-          };
-          eventsToAdd.push(event);
-          eventBookCache[bookName] = event;
-        } else {
-          event = eventsToAdd.find((e) => e.book === bookName);
-        }
-      }
-
-      const existingSignup = signups.find(
-        (s) => s.eventId === event.id && s.phone === phone
-      );
-      const pendingSignup = signupsToAdd.find(
-        (s) => s.eventId === event.id && s.phone === phone
-      );
-
-      if (existingSignup || pendingSignup) {
-        duplicates.push({ line: lineNum, book: bookName, name, phone, reason: existingSignup ? '已存在报名记录' : 'CSV内重复' });
-        return;
-      }
-
-      let effectiveStatus = status;
-      let effectiveWaitlistPosition = waitlistPosition;
-      if (reviewStatus === '已拒绝') {
-        effectiveStatus = '已拒绝';
-        effectiveWaitlistPosition = undefined;
-      } else if (reviewStatus === '待审核') {
-        effectiveStatus = '待审核';
-        effectiveWaitlistPosition = undefined;
-      } else if (status === '候补' && !waitlistPosition) {
-        effectiveWaitlistPosition = 1;
-      }
-
-      signupsToAdd.push({
-        id: crypto.randomUUID(),
-        eventId: event.id,
-        name,
-        phone,
-        answer,
-        status: effectiveStatus,
-        waitlistPosition: effectiveWaitlistPosition,
-        reviewStatus,
-        rejectionReason,
-        reviewedAt,
-        checkedIn,
-        checkedInAt,
-        createdAt,
-        _lineNum: lineNum,
-        _eventBook: bookName
-      });
-    });
-
-    importPreview = { events: eventsToAdd, signups: signupsToAdd, duplicates };
-    importErrors = errors;
-
-    importStats = {
-      eventCount: importPreview.events.length,
-      signupCount: importPreview.signups.length,
-      duplicateCount: importPreview.duplicates.length,
-      errorCount: importErrors.length
-    };
-
-    if (importStats.eventCount !== eventsToAdd.length ||
-        importStats.signupCount !== signupsToAdd.length ||
-        importStats.duplicateCount !== duplicates.length ||
-        importStats.errorCount !== errors.length) {
-      console.warn('Import stats validation mismatch detected');
-    }
+    const result = csvPreviewImport({ importCsvText, events, signups, isoFn: iso });
+    importPreview = result.preview;
+    importErrors = result.errors;
+    importStats = result.stats;
   }
 
   function confirmImport() {
     if (!importPreview) return;
 
-    importPreview.events.forEach((ev) => {
-      const { _isNew, ...eventData } = ev;
-      events = [{ ...eventData }, ...events];
-    });
-
-    importPreview.signups.forEach((sg) => {
-      const { _lineNum, _eventBook, ...signupData } = sg;
-      signups = [{ ...signupData }, ...signups];
-    });
+    const { newEvents, newSignups } = applyImport(importPreview);
+    events = [...newEvents, ...events];
+    signups = [...newSignups, ...signups];
 
     importCsvText = '';
     importPreview = null;
@@ -1153,6 +824,7 @@
           <button class:active={adminTab === '系列活动'} on:click={() => adminTab = '系列活动'}>系列活动</button>
           <button class:active={adminTab === '书目库'} on:click={() => adminTab = '书目库'}>书目库</button>
           <button class:active={adminTab === '会员读者'} on:click={() => adminTab = '会员读者'}>会员读者</button>
+          <button class:active={adminTab === '运营看板'} on:click={() => adminTab = '运营看板'}>运营看板</button>
           <button class:active={adminTab === '数据导入'} on:click={() => adminTab = '数据导入'}>数据导入</button>
         </div>
 
@@ -1316,7 +988,7 @@
                 onBack={() => showPrintView = false}
               />
             {:else}
-            <section class="panel">
+            <section class="panel" bind:this={signupListContainer}>
               <div class="eventHead">
                 <h2>报名名单</h2>
                 <div class="eventHead-actions">
@@ -1520,6 +1192,21 @@
                 onSelectReader={(id) => { selectedReaderId = id; }}
               />
             {/if}
+          </section>
+        {:else if adminTab === '运营看板'}
+          <section class="opsSection">
+            <OpsDashboard
+              {events}
+              {signups}
+              {series}
+              onNavigateToEvent={(eventId, navigateTarget) => {
+                selectedId = eventId;
+                adminTab = '活动管理';
+                if (navigateTarget?.type) {
+                  pendingNavigateTarget = navigateTarget.type;
+                }
+              }}
+            />
           </section>
         {:else if adminTab === '数据导入'}
           <section class="importSection">
@@ -2128,6 +1815,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   font-size: 13px;
   flex-shrink: 0;
 }
+
+.opsSection { display: grid; gap: 16px; }
 
 @media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } }
 </style>
