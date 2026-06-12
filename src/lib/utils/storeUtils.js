@@ -1,9 +1,12 @@
+import { linkSignupToReader } from './readerMigration.js';
+
 const KEYS = {
   books: 'zfl-6-books',
   events: 'zfl-6-events',
   signups: 'zfl-6-signups',
   mySignupIds: 'zfl-6-my-signup-ids',
-  series: 'zfl-6-series'
+  series: 'zfl-6-series',
+  readers: 'zfl-6-readers'
 };
 
 function safeParse(str, fallback) {
@@ -160,7 +163,7 @@ export function promoteFromWaitlist(events, signups, eventId) {
       return signups.map((item) => {
         const promotee = toPromote.find((p) => p.id === item.id);
         if (promotee) {
-          return { ...item, status: '正式', waitlistPosition: undefined };
+          return { ...item, status: '正式', waitlistPosition: undefined, _wasWaitlisted: true };
         }
         if (item.eventId === eventId && item.status === '候补') {
           const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
@@ -175,10 +178,10 @@ export function promoteFromWaitlist(events, signups, eventId) {
   return signups;
 }
 
-export function createSignup(events, signups, eventId, signupData) {
+export function createSignup(events, signups, eventId, signupData, readers = []) {
   const event = getEventById(events, eventId);
   if (!event || event.status !== '开放报名' || !signupData.name?.trim()) {
-    return { success: false, signups, reason: '无法报名' };
+    return { success: false, signups, readers, reason: '无法报名' };
   }
 
   const eventSignups = signups.filter(
@@ -201,12 +204,17 @@ export function createSignup(events, signups, eventId, signupData) {
     waitlistPosition = waitlistCount + 1;
   }
 
+  const linkResult = linkSignupToReader(readers, signupData);
+  const updatedReaders = linkResult.readers;
+  const linkedSignupData = linkResult.signupData;
+
   const newSignup = {
     id: crypto.randomUUID(),
     eventId,
-    name: signupData.name,
-    phone: signupData.phone || '',
-    answer: signupData.answer || '',
+    name: linkedSignupData.name,
+    phone: linkedSignupData.phone || '',
+    answer: linkedSignupData.answer || '',
+    readerId: linkedSignupData.readerId,
     status,
     waitlistPosition,
     reviewStatus,
@@ -220,7 +228,10 @@ export function createSignup(events, signups, eventId, signupData) {
   return {
     success: true,
     signup: newSignup,
-    signups: [newSignup, ...signups]
+    signups: [newSignup, ...signups],
+    readers: updatedReaders,
+    matchedReader: linkResult.reader,
+    isNewReader: linkResult.isNewReader
   };
 }
 

@@ -1,7 +1,9 @@
 <script>
   import { onMount } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2 } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2, UserCog, Search } from 'lucide-svelte';
   import SignupPrintView from '$lib/components/SignupPrintView.svelte';
+  import ReaderList from '$lib/components/ReaderList.svelte';
+  import ReaderDetail from '$lib/components/ReaderDetail.svelte';
   import {
     getSignupsByEvent,
     getPendingSignups,
@@ -17,6 +19,14 @@
     copyToClipboard,
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
+  import { createSignup } from '$lib/utils/storeUtils.js';
+  import { readReaders, writeReaders, findReaderByPhone, updateReader } from '$lib/utils/readerStore.js';
+  import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
+  import {
+    getReaderStats,
+    getAllReadersStats,
+    sortReadersByActivity
+  } from '$lib/utils/readerStats.js';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -40,6 +50,7 @@
   let events = seedEvents;
   let series = seedSeries;
   let signups = [];
+  let readers = [];
   let selectedId = seedEvents[0].id;
   let mode = '用户端';
   let adminTab = '活动管理';
@@ -55,6 +66,7 @@
   let editingEventSeriesIndex = undefined;
   let mySignupIds = [];
   let signupForm = { name: '', phone: '', answer: '' };
+  let matchedReaderInfo = null;
   let hydrated = false;
   let viewMode = '列表';
   let calYear = new Date().getFullYear();
@@ -79,6 +91,11 @@
   let publicLinkTargetEventId = '';
   let publicLinkTargetSeriesId = '';
   let copiedLinkId = '';
+
+  let selectedReaderId = '';
+  let readerSearchKeyword = '';
+  let readerSortBy = 'lastActive';
+  let migrationStats = null;
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -114,6 +131,23 @@
     }
     if (storedMyIds) mySignupIds = JSON.parse(storedMyIds);
     if (storedSeries) series = JSON.parse(storedSeries);
+
+    readers = readReaders();
+
+    if (!hasMigratedReaders() && signups.length > 0) {
+      const result = runFullMigration(readers, signups);
+      readers = result.readers;
+      signups = result.signups;
+      writeReaders(readers);
+      localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
+      markMigrationDone();
+      migrationStats = {
+        newReaders: result.newReaders,
+        updatedReaders: result.updatedReaders,
+        linkedCount: result.linkedCount
+      };
+    }
+
     selectedId = events[0]?.id || '';
     hydrated = true;
   });
@@ -124,7 +158,36 @@
     localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
     localStorage.setItem('zfl-6-my-signup-ids', JSON.stringify(mySignupIds));
     localStorage.setItem('zfl-6-series', JSON.stringify(series));
+    writeReaders(readers);
   }
+
+  $: if (signupForm.phone && signupForm.phone.trim()) {
+    const found = findReaderByPhone(readers, signupForm.phone);
+    if (found) {
+      matchedReaderInfo = found;
+      if (!signupForm.name && found.name) {
+        signupForm.name = found.name;
+      }
+    } else {
+      matchedReaderInfo = null;
+    }
+  } else {
+    matchedReaderInfo = null;
+  }
+
+  $: allReaderStats = getAllReadersStats(readers, signups, events);
+  $: sortedReaderStats = sortReadersByActivity(allReaderStats, readerSortBy);
+  $: filteredReaderStats = sortedReaderStats.filter((item) => {
+    if (!readerSearchKeyword.trim()) return true;
+    const kw = readerSearchKeyword.trim().toLowerCase();
+    return (
+      item.reader.name.toLowerCase().includes(kw) ||
+      item.reader.phone.includes(kw) ||
+      item.reader.note.toLowerCase().includes(kw)
+    );
+  });
+  $: selectedReader = readers.find((r) => r.id === selectedReaderId) || null;
+  $: selectedReaderStats = selectedReader ? getReaderStats(selectedReader.id, signups, events) : null;
 
   $: standaloneEvents = events.filter((e) => !e.seriesId);
   $: selectedEvent = events.find((event) => event.id === selectedId) || events[0];
@@ -420,40 +483,14 @@
   function signup() {
     if (!selectedEvent || selectedEvent.status !== '开放报名' || !signupForm.name.trim()) return;
 
-    const eventSignups = signups.filter((item) => item.eventId === selectedEvent.id && item.reviewStatus === '已通过');
-    const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-    const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
-
-    let status = '正式';
-    let waitlistPosition = undefined;
-    let reviewStatus = '已通过';
-    let rejectionReason = '';
-    let reviewedAt = '';
-
-    if (selectedEvent.reviewRequired) {
-      status = '待审核';
-      reviewStatus = '待审核';
-    } else if (regularCount >= Number(selectedEvent.limit)) {
-      status = '候补';
-      waitlistPosition = waitlistCount + 1;
+    const result = createSignup(events, signups, selectedEvent.id, signupForm, readers);
+    if (result.success) {
+      signups = result.signups;
+      readers = result.readers;
+      mySignupIds = [...mySignupIds, result.signup.id];
+      signupForm = { name: '', phone: '', answer: '' };
+      matchedReaderInfo = null;
     }
-
-    const newSignup = {
-      id: crypto.randomUUID(),
-      eventId: selectedEvent.id,
-      ...signupForm,
-      status,
-      waitlistPosition,
-      reviewStatus,
-      rejectionReason,
-      reviewedAt,
-      checkedIn: false,
-      checkedInAt: '',
-      createdAt: new Date().toLocaleString()
-    };
-    signups = [newSignup, ...signups];
-    mySignupIds = [...mySignupIds, newSignup.id];
-    signupForm = { name: '', phone: '', answer: '' };
   }
 
   function cancelSignup(id) {
@@ -848,6 +885,7 @@
     <article><LibraryBig size={22} /><strong>{events.length}</strong><span>活动</span></article>
     <article><Layers size={22} /><strong>{series.length}</strong><span>系列</span></article>
     <article><Users size={22} /><strong>{signups.length}</strong><span>报名</span></article>
+    <article><UserCog size={22} /><strong>{readers.length}</strong><span>会员读者</span></article>
     <article><ListChecks size={22} /><strong>{events.filter((event) => event.status === '开放报名').length}</strong><span>开放中</span></article>
     <article><UserCheck size={22} /><strong>{checkedInCount}</strong><span>已签到</span></article>
   </section>
@@ -1030,6 +1068,14 @@
           <form on:submit|preventDefault={signup}>
             <input bind:value={signupForm.name} placeholder="姓名" />
             <input bind:value={signupForm.phone} placeholder="联系方式" />
+            {#if matchedReaderInfo}
+              <div class="readerMatchNotice">
+                <span>👤 已识别老读者：{matchedReaderInfo.name}</span>
+                {#if matchedReaderInfo.note}
+                  <span class="readerNote">历史备注：{matchedReaderInfo.note}</span>
+                {/if}
+              </div>
+            {/if}
             <textarea bind:value={signupForm.answer} placeholder={selectedEvent.question || '报名备注'}></textarea>
             {#if selectedEvent.reviewRequired}
               <p class="reviewNotice">📋 本活动需要审核，提交后请等待管理员审核通过</p>
@@ -1106,6 +1152,7 @@
           <button class:active={adminTab === '活动管理'} on:click={() => adminTab = '活动管理'}>活动管理</button>
           <button class:active={adminTab === '系列活动'} on:click={() => adminTab = '系列活动'}>系列活动</button>
           <button class:active={adminTab === '书目库'} on:click={() => adminTab = '书目库'}>书目库</button>
+          <button class:active={adminTab === '会员读者'} on:click={() => adminTab = '会员读者'}>会员读者</button>
           <button class:active={adminTab === '数据导入'} on:click={() => adminTab = '数据导入'}>数据导入</button>
         </div>
 
@@ -1444,6 +1491,36 @@
                 {/each}
               {/if}
             </section>
+          </section>
+        {:else if adminTab === '会员读者'}
+          <section class="readerManagement">
+            {#if migrationStats}
+              <div class="migrationNotice">
+                <strong>🎉 数据迁移完成！</strong>
+                <span>新增 {migrationStats.newReaders} 位读者，更新 {migrationStats.updatedReaders} 位读者信息，关联 {migrationStats.linkedCount} 条报名记录</span>
+                <button class="ghost small" on:click={() => migrationStats = null}>关闭</button>
+              </div>
+            {/if}
+            {#if selectedReader && selectedReaderStats}
+              <ReaderDetail
+                reader={selectedReader}
+                stats={selectedReaderStats}
+                events={events}
+                onBack={() => { selectedReaderId = ''; }}
+                onUpdateNote={(note) => {
+                  readers = updateReader(readers, selectedReader.id, { note });
+                }}
+              />
+            {:else}
+              <ReaderList
+                readerStats={filteredReaderStats}
+                searchKeyword={readerSearchKeyword}
+                sortBy={readerSortBy}
+                onSearch={(kw) => readerSearchKeyword = kw}
+                onSort={(sort) => readerSortBy = sort}
+                onSelectReader={(id) => { selectedReaderId = id; }}
+              />
+            {/if}
           </section>
         {:else if adminTab === '数据导入'}
           <section class="importSection">
@@ -1844,6 +1921,16 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .reviewHint { margin: 8px 0 0; font-size: 13px; color: #6b6459; }
 
 .reviewNotice { margin: 0; padding: 10px 12px; background: #fff3cd; border: 1px solid #ffe082; border-radius: 8px; color: #856404; font-size: 14px; }
+
+.readerMatchNotice { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: #e6f4ea; border: 1px solid #b7dfbf; border-radius: 8px; color: #1e7e34; font-size: 13px; }
+.readerMatchNotice .readerNote { color: #2d6a3b; font-size: 12px; }
+
+.migrationNotice { display: flex; align-items: center; gap: 12px; padding: 14px 18px; background: #e6f4ea; border: 1px solid #b7dfbf; border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.migrationNotice strong { color: #1e7e34; font-size: 15px; }
+.migrationNotice span { color: #2d6a3b; font-size: 13px; flex: 1; }
+.migrationNotice .ghost.small { padding: 5px 10px; font-size: 12px; }
+
+.readerManagement { display: flex; flex-direction: column; gap: 0; }
 
 .pending-indicator { color: #856404; }
 .rejected-indicator { color: #721c24; }

@@ -15,6 +15,8 @@
     createSignup,
     cancelSignup
   } from '$lib/utils/storeUtils.js';
+  import { readReaders, writeReaders, findReaderByPhone } from '$lib/utils/readerStore.js';
+  import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
 
   export let eventId;
 
@@ -23,9 +25,11 @@
   let signups = [];
   let mySignupIds = [];
   let series = [];
+  let readers = [];
   let hydrated = false;
 
   let signupForm = { name: '', phone: '', answer: '' };
+  let matchedReaderInfo = null;
   let signupSuccess = false;
   let lastSignupStatus = '';
   let lastSignupWaitlistPosition = 0;
@@ -43,6 +47,21 @@
   $: if (hydrated) {
     writeSignups(signups);
     writeMySignupIds(mySignupIds);
+    writeReaders(readers);
+  }
+
+  $: if (signupForm.phone && signupForm.phone.trim()) {
+    const found = findReaderByPhone(readers, signupForm.phone);
+    if (found) {
+      matchedReaderInfo = found;
+      if (!signupForm.name && found.name) {
+        signupForm.name = found.name;
+      }
+    } else {
+      matchedReaderInfo = null;
+    }
+  } else {
+    matchedReaderInfo = null;
   }
 
   onMount(() => {
@@ -52,20 +71,33 @@
     signups = store.signups;
     mySignupIds = store.mySignupIds;
     series = store.series;
+    readers = readReaders();
+
+    if (!hasMigratedReaders() && signups.length > 0) {
+      const result = runFullMigration(readers, signups);
+      readers = result.readers;
+      signups = result.signups;
+      writeReaders(readers);
+      localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
+      markMigrationDone();
+    }
+
     hydrated = true;
   });
 
   function handleSignup() {
     if (!event || event.status !== '开放报名' || !signupForm.name.trim()) return;
 
-    const result = createSignup(events, signups, eventId, signupForm);
+    const result = createSignup(events, signups, eventId, signupForm, readers);
     if (result.success) {
       signups = result.signups;
+      readers = result.readers;
       mySignupIds = [...mySignupIds, result.signup.id];
       signupSuccess = true;
       lastSignupStatus = result.signup.status;
       lastSignupWaitlistPosition = result.signup.waitlistPosition || 0;
       signupForm = { name: '', phone: '', answer: '' };
+      matchedReaderInfo = null;
     }
   }
 
@@ -201,6 +233,14 @@
         <form on:submit|preventDefault={handleSignup}>
           <input bind:value={signupForm.name} placeholder="姓名 *" required />
           <input bind:value={signupForm.phone} placeholder="联系方式" />
+          {#if matchedReaderInfo}
+            <div class="readerMatchNotice">
+              <span>👤 已识别老读者：{matchedReaderInfo.name}</span>
+              {#if matchedReaderInfo.note}
+                <span class="readerNote">历史备注：{matchedReaderInfo.note}</span>
+              {/if}
+            </div>
+          {/if}
           <textarea bind:value={signupForm.answer} placeholder={event.question || '报名备注'}></textarea>
           {#if event.reviewRequired}
             <p class="reviewNotice">📋 本活动需要审核，提交后请等待管理员审核通过</p>
@@ -384,6 +424,23 @@
     border-radius: 8px;
     color: #856404;
     font-size: 14px;
+  }
+
+  .readerMatchNotice {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: #e6f4ea;
+    border: 1px solid #b7dfbf;
+    border-radius: 8px;
+    color: #1e7e34;
+    font-size: 13px;
+  }
+
+  .readerMatchNotice .readerNote {
+    color: #2d6a3b;
+    font-size: 12px;
   }
 
   .status-badge {
