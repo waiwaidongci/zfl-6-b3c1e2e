@@ -110,40 +110,81 @@ export function parseCsv(text) {
 
 export function autoDetectMapping(headers) {
   const mapping = {};
-  const headerLowerToIndex = {};
-  headers.forEach((h, i) => {
-    headerLowerToIndex[h.toLowerCase()] = String(i);
-  });
+  const usedHeaderIndexes = new Set();
+  const normalizedHeaders = headers.map((h) => String(h || '').trim().toLowerCase());
 
   const matchRules = {
-    activity: ['活动', '活动名称', '书名', '活动名', '名称'],
-    name: ['姓名', '名字', '报名人', '读者姓名', '读者'],
-    phone: ['手机', '手机号', '电话', '联系方式', '手机号电话'],
-    answer: ['回答', '备注', '报名回答', '答案', '讨论章节'],
-    signupType: ['报名类型', '类型', '报名状态', '状态'],
-    reviewStatus: ['审核状态', '审核'],
-    rejectionReason: ['拒绝原因', '原因'],
-    signupTime: ['报名时间', '创建时间', '提交时间'],
-    reviewTime: ['审核时间', '处理时间'],
-    checkinStatus: ['签到状态', '签到', '到场状态'],
-    checkinTime: ['签到时间', '到场时间'],
-    waitlistPosition: ['候补顺序', '候补号', '候补给号', '候补贴']
+    activity: {
+      exact: ['活动', '活动名称', '书名', '活动名', '名称'],
+      partial: ['活动名称', '书名', '活动名']
+    },
+    name: {
+      exact: ['姓名', '名字', '报名人', '读者姓名', '读者'],
+      partial: ['读者姓名', '报名人']
+    },
+    phone: {
+      exact: ['手机', '手机号', '电话', '联系方式', '手机号电话'],
+      partial: ['手机号', '联系方式']
+    },
+    answer: {
+      exact: ['回答', '备注', '报名回答', '答案', '讨论章节', '回答内容'],
+      partial: ['报名回答', '回答内容', '讨论章节']
+    },
+    signupType: {
+      exact: ['报名类型', '类型', '报名状态'],
+      partial: ['报名类型', '报名状态']
+    },
+    reviewStatus: {
+      exact: ['审核状态', '审核'],
+      partial: ['审核状态']
+    },
+    rejectionReason: {
+      exact: ['拒绝原因', '原因'],
+      partial: ['拒绝原因']
+    },
+    signupTime: {
+      exact: ['报名时间', '创建时间', '提交时间'],
+      partial: ['报名时间', '创建时间', '提交时间']
+    },
+    reviewTime: {
+      exact: ['审核时间', '处理时间'],
+      partial: ['审核时间', '处理时间']
+    },
+    checkinStatus: {
+      exact: ['签到状态', '签到', '到场状态'],
+      partial: ['签到状态', '到场状态']
+    },
+    checkinTime: {
+      exact: ['签到时间', '到场时间'],
+      partial: ['签到时间', '到场时间']
+    },
+    waitlistPosition: {
+      exact: ['候补顺序', '候补号', '候补给号', '候补贴'],
+      partial: ['候补顺序', '候补号']
+    }
   };
 
-  for (const [fieldKey, keywords] of Object.entries(matchRules)) {
-    if (mapping[fieldKey] !== undefined && mapping[fieldKey] !== '') continue;
+  const assignMatch = (fieldKey, keywords, matchFn) => {
+    if (mapping[fieldKey] !== undefined && mapping[fieldKey] !== '') return;
     for (const kw of keywords) {
       const kwLower = kw.toLowerCase();
-      for (let i = 0; i < headers.length; i++) {
-        const h = headers[i];
-        const hLower = h.toLowerCase();
-        if (hLower === kwLower || hLower.includes(kwLower)) {
-          mapping[fieldKey] = String(i);
-          break;
-        }
+      const index = normalizedHeaders.findIndex((header, i) =>
+        !usedHeaderIndexes.has(i) && matchFn(header, kwLower)
+      );
+      if (index !== -1) {
+        mapping[fieldKey] = String(index);
+        usedHeaderIndexes.add(index);
+        return;
       }
-      if (mapping[fieldKey] !== undefined && mapping[fieldKey] !== '') break;
     }
+  };
+
+  for (const [fieldKey, rule] of Object.entries(matchRules)) {
+    assignMatch(fieldKey, rule.exact, (header, kw) => header === kw);
+  }
+
+  for (const [fieldKey, rule] of Object.entries(matchRules)) {
+    assignMatch(fieldKey, rule.partial, (header, kw) => header.includes(kw));
   }
 
   return mapping;
@@ -265,8 +306,9 @@ export function previewImport({
     const rejectionReason = normalizeRejectionReason(getField(row, 'rejectionReason'));
     const createdAt = normalizeTime(getField(row, 'signupTime'));
     const reviewedAt = normalizeTime(getField(row, 'reviewTime'));
-    const checkedIn = normalizeCheckinStatus(getField(row, 'checkinStatus'));
     const checkedInAt = normalizeTime(getField(row, 'checkinTime'));
+    const hasCheckinStatusMapping = mapping.checkinStatus !== undefined && mapping.checkinStatus !== null && mapping.checkinStatus !== '';
+    const checkedIn = hasCheckinStatusMapping ? normalizeCheckinStatus(getField(row, 'checkinStatus')) : !!checkedInAt;
     const waitlistPosition = normalizeWaitlistPosition(getField(row, 'waitlistPosition'));
 
     if (!bookName) {
