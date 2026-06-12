@@ -1,0 +1,250 @@
+const KEYS = {
+  books: 'zfl-6-books',
+  events: 'zfl-6-events',
+  signups: 'zfl-6-signups',
+  mySignupIds: 'zfl-6-my-signup-ids',
+  series: 'zfl-6-series'
+};
+
+function safeParse(str, fallback) {
+  try {
+    return str ? JSON.parse(str) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function safeStringify(val) {
+  try {
+    return JSON.stringify(val);
+  } catch (e) {
+    return '';
+  }
+}
+
+export function readBooks() {
+  return safeParse(localStorage.getItem(KEYS.books), []);
+}
+
+export function writeBooks(books) {
+  localStorage.setItem(KEYS.books, safeStringify(books));
+}
+
+export function readEvents() {
+  const stored = safeParse(localStorage.getItem(KEYS.events), []);
+  return stored.map((item) => {
+    if (item.reviewRequired === undefined) {
+      return { ...item, reviewRequired: false };
+    }
+    return item;
+  });
+}
+
+export function writeEvents(events) {
+  localStorage.setItem(KEYS.events, safeStringify(events));
+}
+
+export function readSignups() {
+  const stored = safeParse(localStorage.getItem(KEYS.signups), []);
+  return stored.map((item) => {
+    let updated = { ...item };
+    if (!updated.status) {
+      updated.status = '正式';
+      updated.waitlistPosition = undefined;
+    }
+    if (updated.reviewStatus === undefined) {
+      updated.reviewStatus = '已通过';
+      updated.rejectionReason = '';
+      updated.reviewedAt = '';
+    }
+    return updated;
+  });
+}
+
+export function writeSignups(signups) {
+  localStorage.setItem(KEYS.signups, safeStringify(signups));
+}
+
+export function readMySignupIds() {
+  return safeParse(localStorage.getItem(KEYS.mySignupIds), []);
+}
+
+export function writeMySignupIds(ids) {
+  localStorage.setItem(KEYS.mySignupIds, safeStringify(ids));
+}
+
+export function readSeries() {
+  return safeParse(localStorage.getItem(KEYS.series), []);
+}
+
+export function writeSeries(series) {
+  localStorage.setItem(KEYS.series, safeStringify(series));
+}
+
+export function readAllStore() {
+  return {
+    books: readBooks(),
+    events: readEvents(),
+    signups: readSignups(),
+    mySignupIds: readMySignupIds(),
+    series: readSeries()
+  };
+}
+
+export function getEventById(events, eventId) {
+  return events.find((e) => e.id === eventId) || null;
+}
+
+export function getSeriesOfEvent(events, series, eventId) {
+  const event = getEventById(events, eventId);
+  if (!event || !event.seriesId) return null;
+  return series.find((s) => s.id === event.seriesId) || null;
+}
+
+export function getSeriesEvents(events, seriesId) {
+  return events
+    .filter((e) => e.seriesId === seriesId)
+    .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+export function getEventIndexInSeries(events, eventId) {
+  const event = getEventById(events, eventId);
+  if (!event || !event.seriesId) return 0;
+  const sEvents = getSeriesEvents(events, event.seriesId);
+  return sEvents.findIndex((e) => e.id === eventId) + 1;
+}
+
+export function getRegularSignupCount(signups, eventId) {
+  return signups.filter(
+    (s) => s.eventId === eventId && s.reviewStatus === '已通过' && s.status === '正式'
+  ).length;
+}
+
+export function getWaitlistCount(signups, eventId) {
+  return signups.filter(
+    (s) => s.eventId === eventId && s.reviewStatus === '已通过' && s.status === '候补'
+  ).length;
+}
+
+export function getPendingCount(signups, eventId) {
+  return signups.filter(
+    (s) => s.eventId === eventId && s.reviewStatus === '待审核'
+  ).length;
+}
+
+export function getSeatsLeft(events, signups, eventId) {
+  const event = getEventById(events, eventId);
+  if (!event) return 0;
+  return Math.max(0, Number(event.limit) - getRegularSignupCount(signups, eventId));
+}
+
+export function promoteFromWaitlist(events, signups, eventId) {
+  const event = getEventById(events, eventId);
+  if (!event) return signups;
+
+  const eventSignups = signups.filter(
+    (item) => item.eventId === eventId && item.reviewStatus === '已通过'
+  );
+  const regularCount = eventSignups.filter((item) => item.status === '正式').length;
+  const limit = Number(event.limit);
+
+  if (regularCount < limit) {
+    const waitlist = eventSignups
+      .filter((item) => item.status === '候补')
+      .sort((a, b) => a.waitlistPosition - b.waitlistPosition);
+
+    const spotsToFill = limit - regularCount;
+    const toPromote = waitlist.slice(0, spotsToFill);
+
+    if (toPromote.length > 0) {
+      return signups.map((item) => {
+        const promotee = toPromote.find((p) => p.id === item.id);
+        if (promotee) {
+          return { ...item, status: '正式', waitlistPosition: undefined };
+        }
+        if (item.eventId === eventId && item.status === '候补') {
+          const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
+          if (newPosition > 0) {
+            return { ...item, waitlistPosition: newPosition };
+          }
+        }
+        return item;
+      });
+    }
+  }
+  return signups;
+}
+
+export function createSignup(events, signups, eventId, signupData) {
+  const event = getEventById(events, eventId);
+  if (!event || event.status !== '开放报名' || !signupData.name?.trim()) {
+    return { success: false, signups, reason: '无法报名' };
+  }
+
+  const eventSignups = signups.filter(
+    (item) => item.eventId === eventId && item.reviewStatus === '已通过'
+  );
+  const regularCount = eventSignups.filter((item) => item.status === '正式').length;
+  const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
+
+  let status = '正式';
+  let waitlistPosition = undefined;
+  let reviewStatus = '已通过';
+  let rejectionReason = '';
+  let reviewedAt = '';
+
+  if (event.reviewRequired) {
+    status = '待审核';
+    reviewStatus = '待审核';
+  } else if (regularCount >= Number(event.limit)) {
+    status = '候补';
+    waitlistPosition = waitlistCount + 1;
+  }
+
+  const newSignup = {
+    id: crypto.randomUUID(),
+    eventId,
+    name: signupData.name,
+    phone: signupData.phone || '',
+    answer: signupData.answer || '',
+    status,
+    waitlistPosition,
+    reviewStatus,
+    rejectionReason,
+    reviewedAt,
+    checkedIn: false,
+    checkedInAt: '',
+    createdAt: new Date().toLocaleString()
+  };
+
+  return {
+    success: true,
+    signup: newSignup,
+    signups: [newSignup, ...signups]
+  };
+}
+
+export function cancelSignup(events, signups, signupId) {
+  const signup = signups.find((item) => item.id === signupId);
+  if (!signup) return signups;
+
+  let newSignups = signups.filter((item) => item.id !== signupId);
+
+  if (signup.status === '正式' && signup.reviewStatus === '已通过') {
+    newSignups = promoteFromWaitlist(events, newSignups, signup.eventId);
+  } else if (signup.status === '候补' && signup.reviewStatus === '已通过') {
+    newSignups = newSignups.map((item) => {
+      if (
+        item.eventId === signup.eventId &&
+        item.status === '候补' &&
+        item.reviewStatus === '已通过' &&
+        item.waitlistPosition > signup.waitlistPosition
+      ) {
+        return { ...item, waitlistPosition: item.waitlistPosition - 1 };
+      }
+      return item;
+    });
+  }
+
+  return newSignups;
+}

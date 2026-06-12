@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2 } from 'lucide-svelte';
   import SignupPrintView from '$lib/components/SignupPrintView.svelte';
   import {
     getSignupsByEvent,
@@ -12,6 +12,12 @@
     getRegularCheckedInCount,
     sortSignupsForCsv
   } from '$lib/utils/signupUtils.js';
+  import {
+    buildFullPublicUrl,
+    buildPublicEventUrl,
+    copyToClipboard,
+    getSeriesPublicEventLinks
+  } from '$lib/utils/eventLinkUtils.js';
 
   const iso = (offset = 0) => {
     const date = new Date();
@@ -69,6 +75,11 @@
   let importErrors = [];
   let importStats = null;
   let showPrintView = false;
+  let showPublicLinkModal = false;
+  let publicLinkModalType = 'single';
+  let publicLinkTargetEventId = '';
+  let publicLinkTargetSeriesId = '';
+  let copiedLinkId = '';
 
   onMount(() => {
     const storedBooks = localStorage.getItem('zfl-6-books');
@@ -777,6 +788,43 @@
     importErrors = [];
     importStats = null;
   }
+
+  function openPublicLinkForEvent(eventId) {
+    publicLinkModalType = 'single';
+    publicLinkTargetEventId = eventId;
+    publicLinkTargetSeriesId = '';
+    showPublicLinkModal = true;
+  }
+
+  function openPublicLinkForSeries(seriesId) {
+    publicLinkModalType = 'series';
+    publicLinkTargetEventId = '';
+    publicLinkTargetSeriesId = seriesId;
+    showPublicLinkModal = true;
+  }
+
+  function closePublicLinkModal() {
+    showPublicLinkModal = false;
+    copiedLinkId = '';
+    publicLinkTargetEventId = '';
+    publicLinkTargetSeriesId = '';
+  }
+
+  async function handleCopyLink(text, id) {
+    try {
+      await copyToClipboard(text);
+      copiedLinkId = id;
+      setTimeout(() => { copiedLinkId = ''; }, 2000);
+    } catch (e) {
+      alert('复制失败，请手动复制');
+    }
+  }
+
+  function previewPublicPage(url) {
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank');
+    }
+  }
 </script>
 
 <main>
@@ -829,6 +877,9 @@
               </button>
               {#if mode === '管理端'}
                 <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
+                <button class="ghost editEventBtn shareBtn" on:click={(e) => { e.stopPropagation(); openPublicLinkForEvent(event.id); }} title="生成公开报名链接">
+                  <Share2 size={14} />
+                </button>
               {/if}
             </div>
           {/each}
@@ -861,6 +912,9 @@
                       </button>
                       {#if mode === '管理端'}
                         <button class="ghost editEventBtn" on:click={(e) => { e.stopPropagation(); editEvent(event); }}>编辑</button>
+                        <button class="ghost editEventBtn shareBtn" on:click={(e) => { e.stopPropagation(); openPublicLinkForEvent(event.id); }} title="生成公开报名链接">
+                          <Share2 size={12} />
+                        </button>
                       {/if}
                     </div>
                   {/each}
@@ -1140,6 +1194,9 @@
                       {/if}
                     </div>
                     <div class="bookActions">
+                      <button class="ghost" on:click={() => openPublicLinkForSeries(s.id)}>
+                        <Share2 size={14} /> 分享
+                      </button>
                       <button class="ghost" on:click={() => editSeries(s)}>编辑</button>
                       <button class="ghost danger" on:click={() => deleteSeries(s.id)}>
                         <Trash2 size={14} /> 删除
@@ -1221,6 +1278,7 @@
                     签到 {selectedCheckedInCount}/{selectedRegularSignups.length}
                   </span>
                   {#if selectedEvent}<button class="ghost" on:click={() => toggleEventStatus(selectedEvent.id)}>{selectedEvent.status === '开放报名' ? '关闭报名' : '开放报名'}</button>{/if}
+                  {#if selectedEvent}<button class="ghost printListBtn" on:click={() => openPublicLinkForEvent(selectedEvent.id)}><Share2 size={16} /> 公开链接</button>{/if}
                   {#if selectedEvent}<button class="ghost printListBtn" on:click={() => showPrintView = true}><Printer size={16} /> 打印名单</button>{/if}
                 </div>
               </div>
@@ -1501,6 +1559,97 @@
       </div>
     {/if}
   </section>
+
+  {#if showPublicLinkModal}
+    <div class="modalOverlay" role="dialog" aria-modal="true" aria-label="活动公开报名链接" on:click={closePublicLinkModal} on:keydown={(e) => { if (e.key === 'Escape') closePublicLinkModal(); }}>
+      <div class="modalContent" role="document" on:click={(e) => e.stopPropagation()}>
+        <div class="modalHeader">
+          <h2><Share2 size={18} />活动公开报名链接</h2>
+          <button class="modalClose" on:click={closePublicLinkModal}><X size={18} /></button>
+        </div>
+        <div class="modalBody">
+          {#if publicLinkModalType === 'single'}
+            {@const targetEvent = events.find((e) => e.id === publicLinkTargetEventId)}
+            {#if targetEvent}
+              {@const singleUrl = buildFullPublicUrl(targetEvent.id)}
+              {@const targetSeries = getSeriesOfEvent(targetEvent.id)}
+              <div class="linkCard">
+                <div class="linkCardHead">
+                  <strong>{targetEvent.book}</strong>
+                  {#if targetSeries}
+                    <span class="seriesTag">📚 {targetSeries.title} · 第{getEventIndexInSeries(targetEvent.id)}期</span>
+                  {/if}
+                  <span>{targetEvent.host} · {targetEvent.time.replace('T', ' ')}</span>
+                  <span class="status-badge {targetEvent.status === '开放报名' ? 'regular' : 'waitlist'}">{targetEvent.status}</span>
+                </div>
+                <div class="linkRow">
+                  <input readonly value={singleUrl} />
+                  <button class="ghost copyBtn" on:click={() => handleCopyLink(singleUrl, 'single')}>
+                    {#if copiedLinkId === 'single'}
+                      <CheckCircle2 size={16} /> 已复制
+                    {:else}
+                      <Copy size={16} /> 复制
+                    {/if}
+                  </button>
+                  <button class="ghost previewBtn" on:click={() => previewPublicPage(singleUrl)}>
+                    <ExternalLink size={16} /> 预览
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {:else if publicLinkModalType === 'series'}
+            {@const targetSeries = series.find((s) => s.id === publicLinkTargetSeriesId)}
+            {@const seriesLinks = targetSeries ? getSeriesPublicEventLinks(events, targetSeries.id) : []}
+            {#if targetSeries}
+              <div class="linkCard">
+                <div class="linkCardHead">
+                  <Layers size={16} />
+                  <strong>{targetSeries.title}</strong>
+                  <span>共 {seriesLinks.length} 期</span>
+                  {#if targetSeries.description}
+                    <p class="seriesLinkDesc">{targetSeries.description}</p>
+                  {/if}
+                </div>
+              </div>
+              {#if seriesLinks.length === 0}
+                <p class="empty empty-small">该系列下暂无活动</p>
+              {:else}
+                {#each seriesLinks as linkItem, idx}
+                  {@const ev = events.find((e) => e.id === linkItem.eventId)}
+                  <div class="linkCard linkCard-series">
+                    <div class="linkCardHead">
+                      <span class="episodeBadge small">第{idx + 1}期</span>
+                      <strong>{linkItem.book}</strong>
+                      <span>{ev?.host} · {linkItem.time.replace('T', ' ')}</span>
+                      {#if ev}
+                        <span class="status-badge {ev.status === '开放报名' ? 'regular' : 'waitlist'}">{ev.status}</span>
+                      {/if}
+                    </div>
+                    <div class="linkRow">
+                      <input readonly value={buildFullPublicUrl(linkItem.eventId)} />
+                      <button class="ghost copyBtn" on:click={() => handleCopyLink(buildFullPublicUrl(linkItem.eventId), linkItem.eventId)}>
+                        {#if copiedLinkId === linkItem.eventId}
+                          <CheckCircle2 size={16} /> 已复制
+                        {:else}
+                          <Copy size={16} /> 复制
+                        {/if}
+                      </button>
+                      <button class="ghost previewBtn" on:click={() => previewPublicPage(buildFullPublicUrl(linkItem.eventId))}>
+                        <ExternalLink size={16} /> 预览
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              {/if}
+            {/if}
+          {/if}
+        </div>
+        <div class="modalFooter">
+          <button on:click={closePublicLinkModal}>关闭</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -1740,5 +1889,154 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 .printListBtn { display: inline-flex; align-items: center; gap: 6px; }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } }
+.shareBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 43, 37, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modalContent {
+  background: #fff;
+  border-radius: 10px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 22px;
+  border-bottom: 1px solid #e1d8ca;
+  background: #f8f5ee;
+  border-radius: 10px 10px 0 0;
+}
+
+.modalHeader h2 {
+  margin: 0;
+  font-size: 17px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modalClose {
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  color: #686258;
+  cursor: pointer;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.modalClose:hover {
+  background: #eee8dc;
+  color: #2a2822;
+}
+
+.modalBody {
+  padding: 20px 22px;
+}
+
+.modalFooter {
+  padding: 14px 22px;
+  border-top: 1px solid #e1d8ca;
+  background: #faf7f0;
+  border-radius: 0 0 10px 10px;
+}
+
+.modalFooter button {
+  width: 100%;
+}
+
+.linkCard {
+  background: #fffaf2;
+  border: 1px solid #e3dacb;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.linkCard-series {
+  background: #fff;
+}
+
+.linkCard:last-child {
+  margin-bottom: 0;
+}
+
+.linkCardHead {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.linkCardHead strong {
+  font-size: 15px;
+  color: #2a2822;
+}
+
+.linkCardHead span {
+  font-size: 13px;
+  color: #6b6459;
+}
+
+.linkCardHead .seriesTag {
+  display: inline-block;
+  font-size: 11px;
+  color: #7b6b4e;
+  background: #efe7d8;
+  padding: 2px 8px;
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.seriesLinkDesc {
+  font-size: 13px;
+  color: #4a4439;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.linkRow {
+  display: flex;
+  gap: 8px;
+}
+
+.linkRow input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.copyBtn, .previewBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } }
 </style>
