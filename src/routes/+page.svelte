@@ -466,7 +466,7 @@
         signups = signups.map((item) => {
           const promotee = toPromote.find((p) => p.id === item.id);
           if (promotee) {
-            return { ...item, status: '正式', waitlistPosition: undefined };
+            return { ...item, status: '正式', waitlistPosition: undefined, _wasWaitlisted: true };
           }
           if (item.eventId === eventId && item.status === '候补') {
             const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
@@ -1505,7 +1505,6 @@
               <ReaderDetail
                 reader={selectedReader}
                 stats={selectedReaderStats}
-                events={events}
                 onBack={() => { selectedReaderId = ''; }}
                 onUpdateNote={(note) => {
                   readers = updateReader(readers, selectedReader.id, { note });

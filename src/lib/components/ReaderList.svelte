@@ -59,7 +59,7 @@
   {:else}
     <div class="panel readerList">
       {#each readerStats as item}
-        <article class="readerCard" on:click={() => onSelectReader(item.reader.id)}>
+        <button type="button" class="readerCard" on:click={() => onSelectReader(item.reader.id)}>
           <div class="readerMainInfo">
             <div class="readerAvatar">
               {item.reader.name ? item.reader.name.charAt(0).toUpperCase() : '?'}
@@ -95,7 +95,7 @@
             </div>
           {/if}
           <ChevronRight size={18} class="chevron" />
-        </article>
+        </button>
       {/each}
     </div>
   {/if}
@@ -194,6 +194,10 @@
     border-radius: 8px;
     cursor: pointer;
     transition: all 0.2s;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
   }
 
   .readerCard:hover {
@@ -281,7 +285,7 @@
     color: #999;
   }
 
-  .chevron {
+  :global(.chevron) {
     grid-area: chevron;
     color: #8a7f6a;
     align-self: center;

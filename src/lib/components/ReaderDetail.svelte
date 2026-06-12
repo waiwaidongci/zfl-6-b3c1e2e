@@ -3,7 +3,6 @@
 
   export let reader;
   export let stats;
-  export let events;
   export let onBack;
   export let onUpdateNote;
 
@@ -491,3 +490,4 @@
       flex-direction: column;
     }
   }
+</style>
