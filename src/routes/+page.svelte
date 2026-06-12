@@ -49,6 +49,19 @@
     getCalendarData,
     handleCalendarDayToggle
   } from '$lib/utils/eventActions.js';
+  import {
+    OPERATION_TYPES,
+    OPERATION_LABELS,
+    readOperationLogs,
+    writeOperationLogs,
+    recordOperation,
+    undoOperation,
+    undoLastNOperations,
+    getUndoableLogs,
+    buildBeforeStateSnapshot,
+    buildAfterStateSnapshot,
+    generateDescription
+  } from '$lib/utils/operationLog.js';
 
   const seedBooks = [
     { id: crypto.randomUUID(), title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
@@ -122,6 +135,11 @@
   let pendingNavigateTarget = null;
   let signupListContainer;
 
+  let operationLogs = [];
+  let showOperationLogPanel = false;
+  let undoCountInput = 1;
+  let lastUndoMessage = '';
+
   function scrollToSignupGroup(targetType) {
     if (!signupListContainer) return;
     const selectors = {
@@ -156,6 +174,7 @@
     mySignupIds = loaded.mySignupIds;
     readers = loaded.readers;
     migrationStats = loaded.migrationStats;
+    operationLogs = readOperationLogs();
 
     selectedId = events[0]?.id || '';
     hydrated = true;
@@ -366,23 +385,89 @@
 
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
+
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+
     if (editingEventId) {
       const newLimit = Number(eventForm.limit || 0);
       const eventId = editingEventId;
       const prevLimit = editingEventPrevLimit;
+      const beforeEvent = events.find((e) => e.id === eventId);
       const updatedEvents = events.map((e) => e.id === eventId ? { ...eventForm, id: eventId, limit: newLimit, seriesId: editingEventSeriesId, seriesIndex: editingEventSeriesIndex } : e);
       events = updatedEvents;
+      let updatedSignups = signups;
+      if (newLimit > prevLimit) {
+        updatedSignups = promoteFromWaitlist(eventId, updatedEvents);
+        signups = updatedSignups;
+      }
+
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+
+      if (prevLimit !== newLimit) {
+        const target = { eventId, eventName: beforeEvent?.book || eventForm.book, limitChanged: true };
+        const description = generateDescription(OPERATION_TYPES.ADJUST_LIMIT, target, { beforeLimit: prevLimit, afterLimit: newLimit, book: eventForm.book });
+        const res = recordOperation(
+          operationLogs,
+          OPERATION_TYPES.ADJUST_LIMIT,
+          description,
+          target,
+          beforeSnapshot,
+          afterSnapshot,
+          { beforeLimit: prevLimit, afterLimit: newLimit, book: eventForm.book, beforeEvent: beforeSnapshot.events.find((e) => e.id === eventId) }
+        );
+        operationLogs = res.logs;
+
+        if (JSON.stringify(beforeEvent) !== JSON.stringify({ ...eventForm, id: eventId, limit: newLimit, seriesId: editingEventSeriesId, seriesIndex: editingEventSeriesIndex })) {
+          const editTarget = { eventId, eventName: beforeEvent?.book || eventForm.book };
+          const editDesc = generateDescription(OPERATION_TYPES.EDIT_EVENT, editTarget, { book: eventForm.book });
+          const editRes = recordOperation(
+            operationLogs,
+            OPERATION_TYPES.EDIT_EVENT,
+            editDesc,
+            editTarget,
+            beforeSnapshot,
+            afterSnapshot,
+            { book: eventForm.book, beforeEvent }
+          );
+          operationLogs = editRes.logs;
+        }
+      } else {
+        const target = { eventId, eventName: beforeEvent?.book || eventForm.book };
+        const description = generateDescription(OPERATION_TYPES.EDIT_EVENT, target, { book: eventForm.book });
+        const res = recordOperation(
+          operationLogs,
+          OPERATION_TYPES.EDIT_EVENT,
+          description,
+          target,
+          beforeSnapshot,
+          afterSnapshot,
+          { book: eventForm.book, beforeEvent }
+        );
+        operationLogs = res.logs;
+      }
+
       editingEventId = '';
       editingEventPrevLimit = 0;
       editingEventSeriesId = undefined;
       editingEventSeriesIndex = undefined;
-      if (newLimit > prevLimit) {
-        promoteFromWaitlist(eventId, updatedEvents);
-      }
     } else {
       const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
       events = [event, ...events];
       selectedId = event.id;
+
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+      const target = { eventId: event.id, eventName: event.book };
+      const description = generateDescription(OPERATION_TYPES.CREATE_EVENT, target, { book: event.book });
+      const res = recordOperation(
+        operationLogs,
+        OPERATION_TYPES.CREATE_EVENT,
+        description,
+        target,
+        beforeSnapshot,
+        afterSnapshot,
+        { book: event.book, host: event.host, limit: event.limit }
+      );
+      operationLogs = res.logs;
     }
     clearBookSelection();
     eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
@@ -467,9 +552,29 @@
   }
 
   function cancelSignup(id) {
+    const signup = signups.find((item) => item.id === id);
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const event = events.find((e) => e.id === signup?.eventId);
+
     const result = handleSignupCancel(events, signups, mySignupIds, id);
     signups = result.signups;
     mySignupIds = result.mySignupIds;
+
+    if (signup) {
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+      const target = { signupId: id, eventId: signup.eventId, readerId: signup.readerId, eventName: event?.book || '', readerName: signup.name };
+      const description = generateDescription(OPERATION_TYPES.CANCEL_SIGNUP, target, { name: signup.name });
+      const res = recordOperation(
+        operationLogs,
+        OPERATION_TYPES.CANCEL_SIGNUP,
+        description,
+        target,
+        beforeSnapshot,
+        afterSnapshot,
+        { name: signup.name, phone: signup.phone, eventName: event?.book, originalSignup: signup }
+      );
+      operationLogs = res.logs;
+    }
   }
 
   function toggleEventStatus(id) {
@@ -477,11 +582,52 @@
   }
 
   function toggleCheckIn(id) {
+    const signup = signups.find((item) => item.id === id);
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const event = events.find((e) => e.id === signup?.eventId);
+    const willCheckIn = signup && !signup.checkedIn;
+
     signups = toggleCheckInAction(signups, id);
+
+    if (signup) {
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+      const target = { signupId: id, eventId: signup.eventId, readerId: signup.readerId, eventName: event?.book || '', readerName: signup.name };
+      const description = generateDescription(OPERATION_TYPES.CHECK_IN, target, { name: signup.name, checkedIn: willCheckIn });
+      const res = recordOperation(
+        operationLogs,
+        OPERATION_TYPES.CHECK_IN,
+        description,
+        target,
+        beforeSnapshot,
+        afterSnapshot,
+        { name: signup.name, phone: signup.phone, eventName: event?.book, checkedIn: willCheckIn }
+      );
+      operationLogs = res.logs;
+    }
   }
 
   function approveSignup(id) {
+    const signup = signups.find((item) => item.id === id);
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const event = events.find((e) => e.id === signup?.eventId);
+
     signups = approveSignupAction(events, signups, id);
+
+    if (signup) {
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+      const target = { signupId: id, eventId: signup.eventId, readerId: signup.readerId, eventName: event?.book || '', readerName: signup.name };
+      const description = generateDescription(OPERATION_TYPES.APPROVE_SIGNUP, target, { name: signup.name });
+      const res = recordOperation(
+        operationLogs,
+        OPERATION_TYPES.APPROVE_SIGNUP,
+        description,
+        target,
+        beforeSnapshot,
+        afterSnapshot,
+        { name: signup.name, phone: signup.phone, eventName: event?.book }
+      );
+      operationLogs = res.logs;
+    }
   }
 
   function startRejectSignup(id) {
@@ -495,7 +641,28 @@
   }
 
   function confirmRejectSignup() {
+    const signup = signups.find((item) => item.id === rejectingSignupId);
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const event = events.find((e) => e.id === signup?.eventId);
+
     signups = rejectSignupAction(signups, rejectingSignupId, rejectionReason);
+
+    if (signup) {
+      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+      const target = { signupId: rejectingSignupId, eventId: signup.eventId, readerId: signup.readerId, eventName: event?.book || '', readerName: signup.name };
+      const description = generateDescription(OPERATION_TYPES.REJECT_SIGNUP, target, { name: signup.name });
+      const res = recordOperation(
+        operationLogs,
+        OPERATION_TYPES.REJECT_SIGNUP,
+        description,
+        target,
+        beforeSnapshot,
+        afterSnapshot,
+        { name: signup.name, phone: signup.phone, eventName: event?.book, rejectionReason }
+      );
+      operationLogs = res.logs;
+    }
+
     rejectingSignupId = '';
     rejectionReason = '';
   }
@@ -548,6 +715,9 @@
   function confirmImport() {
     if (!importPreview) return;
 
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const importStatsBackup = { ...importStats };
+
     const result = applyImport(importPreview, readers);
     events = [...result.newEvents, ...events];
     signups = [...result.newSignups, ...signups];
@@ -565,6 +735,33 @@
     if (result.readers) {
       readers = result.readers;
     }
+
+    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+    const target = {
+      newEventIds: result.newEvents.map((e) => e.id),
+      newSignupIds: result.newSignups.map((s) => s.id),
+      updatedSignupIds: (result.updatedSignups || []).map((u) => u.id)
+    };
+    const description = generateDescription(OPERATION_TYPES.CSV_IMPORT, target, {
+      newSignupCount: importStatsBackup.newSignupCount || 0,
+      newEventCount: importStatsBackup.newEventCount || 0
+    });
+    const res = recordOperation(
+      operationLogs,
+      OPERATION_TYPES.CSV_IMPORT,
+      description,
+      target,
+      beforeSnapshot,
+      afterSnapshot,
+      {
+        ...importStatsBackup,
+        newEventCount: result.newEvents.length,
+        newSignupCount: result.newSignups.length,
+        updateCount: (result.updatedSignups || []).length,
+        conflictStrategy: importConflictStrategy
+      }
+    );
+    operationLogs = res.logs;
 
     importCsvText = '';
     importPreview = null;
@@ -654,6 +851,59 @@
       window.open(url, '_blank');
     }
   }
+
+  function handleUndoOperation(logId) {
+    const currentState = { events, signups, readers, mySignupIds, series };
+    const result = undoOperation(operationLogs, logId, currentState);
+    if (result.success) {
+      operationLogs = result.logs;
+      events = result.state.events;
+      signups = result.state.signups;
+      readers = result.state.readers;
+      mySignupIds = result.state.mySignupIds;
+      series = result.state.series;
+      lastUndoMessage = `已撤销：${result.undoneLog.description}`;
+      setTimeout(() => { lastUndoMessage = ''; }, 3000);
+    } else {
+      lastUndoMessage = `撤销失败：${result.reason}`;
+      setTimeout(() => { lastUndoMessage = ''; }, 3000);
+    }
+  }
+
+  function handleUndoLastN() {
+    const n = Math.max(1, Math.min(100, Number(undoCountInput) || 1));
+    const currentState = { events, signups, readers, mySignupIds, series };
+    const result = undoLastNOperations(operationLogs, n, currentState);
+    if (result.success) {
+      operationLogs = result.logs;
+      events = result.state.events;
+      signups = result.state.signups;
+      readers = result.state.readers;
+      mySignupIds = result.state.mySignupIds;
+      series = result.state.series;
+      lastUndoMessage = `已撤销 ${result.undoneCount} 次操作`;
+      setTimeout(() => { lastUndoMessage = ''; }, 3000);
+    } else {
+      lastUndoMessage = '没有可撤销的操作';
+      setTimeout(() => { lastUndoMessage = ''; }, 3000);
+    }
+  }
+
+  function toggleOperationLogPanel() {
+    showOperationLogPanel = !showOperationLogPanel;
+  }
+
+  function formatTimestamp(ts) {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString('zh-CN', { hour12: false });
+    } catch (e) {
+      return ts;
+    }
+  }
+
+  $: undoableLogs = getUndoableLogs(operationLogs);
+  $: undoableCount = undoableLogs.length;
 </script>
 
 <main>
@@ -665,8 +915,20 @@
     <div class="mode">
       <button class:active={mode === '用户端'} on:click={() => mode = '用户端'}>用户端</button>
       <button class:active={mode === '管理端'} on:click={() => mode = '管理端'}>管理端</button>
+      {#if mode === '管理端'}
+        <button class="log-btn" class:active={showOperationLogPanel} on:click={toggleOperationLogPanel} title="操作日志与撤销">
+          📋 操作日志 {#if undoableCount > 0}<span class="log-badge">{undoableCount}</span>{/if}
+        </button>
+      {/if}
     </div>
   </header>
+
+  {#if lastUndoMessage}
+    <div class="undo-toast">
+      <CheckCircle2 size={16} />
+      <span>{lastUndoMessage}</span>
+    </div>
+  {/if}
 
   <section class="metrics">
     <article><LibraryBig size={22} /><strong>{events.length}</strong><span>活动</span></article>
@@ -1313,7 +1575,22 @@
                 stats={selectedReaderStats}
                 onBack={() => { selectedReaderId = ''; }}
                 onUpdateNote={(note) => {
+                  const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+                  const beforeNote = selectedReader?.note || '';
                   readers = updateReader(readers, selectedReader.id, { note });
+                  const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+                  const target = { readerId: selectedReader.id, readerName: selectedReader.name };
+                  const description = generateDescription(OPERATION_TYPES.UPDATE_READER_NOTE, target, { name: selectedReader.name });
+                  const res = recordOperation(
+                    operationLogs,
+                    OPERATION_TYPES.UPDATE_READER_NOTE,
+                    description,
+                    target,
+                    beforeSnapshot,
+                    afterSnapshot,
+                    { name: selectedReader.name, phone: selectedReader.phone, beforeNote, afterNote: note }
+                  );
+                  operationLogs = res.logs;
                 }}
                 onAddTag={(tag) => {
                   readers = addTagToReader(readers, selectedReader.id, tag);
@@ -1739,6 +2016,76 @@
         </div>
         <div class="modalFooter">
           <button on:click={closePublicLinkModal}>关闭</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showOperationLogPanel && mode === '管理端'}
+    <div class="oplog-overlay" on:click|self={toggleOperationLogPanel}>
+      <div class="oplog-panel">
+        <div class="oplog-header">
+          <div class="oplog-title-row">
+            <h2>📋 操作日志与撤销</h2>
+            <button class="ghost close-btn" on:click={toggleOperationLogPanel}><X size={18} /></button>
+          </div>
+          <div class="oplog-undo-bar">
+            <div class="oplog-undo-info">
+              <strong>可撤销操作：{undoableCount}</strong>
+              <span class="oplog-hint">仅在当前浏览器会话中有效，按时间倒序排列</span>
+            </div>
+            <div class="oplog-undo-actions">
+              <input
+                type="number"
+                min="1"
+                max="100"
+                bind:value={undoCountInput}
+                placeholder="数量"
+                class="oplog-count-input"
+              />
+              <button class="undo-n-btn" disabled={undoableCount === 0} on:click={handleUndoLastN}>
+                撤销最近 {Math.min(Number(undoCountInput) || 1, undoableCount)} 次
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="oplog-content">
+          {#if operationLogs.length === 0}
+            <div class="oplog-empty">
+              <Bookmark size={32} />
+              <p>暂无操作记录</p>
+              <span class="oplog-empty-hint">创建活动、审核报名等操作将在此处显示</span>
+            </div>
+          {:else}
+            {#each operationLogs as log, i}
+              <div class="oplog-item" class:log-undone={log.undone}>
+                <div class="oplog-item-main">
+                  <div class="oplog-item-type">
+                    <span class="oplog-type-tag type-{log.type.toLowerCase().replace(/_/g, '-')}">
+                      {OPERATION_LABELS[log.type] || log.type}
+                    </span>
+                    {#if log.undone}
+                      <span class="oplog-undone-tag">已撤销</span>
+                    {/if}
+                  </div>
+                  <div class="oplog-item-desc">{log.description}</div>
+                  <div class="oplog-item-meta">
+                    <span>🕒 {formatTimestamp(log.timestamp)}</span>
+                    {#if log.undoTime}
+                      <span>↩️ 撤销于 {formatTimestamp(log.undoTime)}</span>
+                    {/if}
+                  </div>
+                </div>
+                {#if !log.undone}
+                  <div class="oplog-item-actions">
+                    <button class="undo-btn" on:click={() => handleUndoOperation(log.id)} title="撤销此操作">
+                      ↩️ 撤销
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
         </div>
       </div>
     </div>
@@ -2252,5 +2599,315 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   background: #fff;
 }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } }
+.log-btn {
+  background: #e8dfd0;
+  color: #5c4f3a;
+  border: 1px solid #d4c8b2;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.log-btn:hover { background: #e0d5c2; }
+.log-btn:active { transform: scale(0.98); }
+.log-btn.active { background: #d9cfb8; border-color: #b8a88c; }
+
+.log-badge {
+  background: #e74c3c;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  line-height: 1;
+}
+
+.undo-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  background: #2ecc71;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(46, 204, 113, 0.4);
+  animation: toastIn 0.3s ease;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, -20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.oplog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(42, 40, 34, 0.55);
+  z-index: 9998;
+  display: flex;
+  justify-content: flex-end;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.oplog-panel {
+  width: 560px;
+  max-width: 100vw;
+  background: #fdfbf6;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.12);
+  animation: slideIn 0.25s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.oplog-header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #e6ddcb;
+  background: #f8f3e8;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.oplog-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.oplog-title-row h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #3d382e;
+}
+
+.close-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a7f6a;
+}
+
+.close-btn:hover { background: #ebe3d2; color: #5c4f3a; }
+
+.oplog-undo-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.oplog-undo-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.oplog-undo-info strong {
+  font-size: 14px;
+  color: #3d382e;
+}
+
+.oplog-hint {
+  font-size: 11px;
+  color: #9c9078;
+}
+
+.oplog-undo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.oplog-count-input {
+  width: 72px;
+  padding: 7px 10px;
+  border: 1px solid #d4c8b2;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.oplog-count-input:focus { border-color: #b8a88c; }
+
+.undo-n-btn {
+  background: linear-gradient(135deg, #e67e22, #d35400);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.1s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(230, 126, 34, 0.3);
+}
+
+.undo-n-btn:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(230, 126, 34, 0.4); }
+.undo-n-btn:active:not(:disabled) { transform: scale(0.97); }
+.undo-n-btn:disabled {
+  background: #d4c8b2;
+  color: #9c9078;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.oplog-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+}
+
+.oplog-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #9c9078;
+  text-align: center;
+  gap: 10px;
+}
+
+.oplog-empty p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #8a7f6a;
+}
+
+.oplog-empty-hint {
+  font-size: 12px;
+  color: #b8a88c;
+  max-width: 240px;
+  line-height: 1.6;
+}
+
+.oplog-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e6ddcb;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.oplog-item:hover { border-color: #d4c8b2; background: #fdfaf3; }
+
+.oplog-item.log-undone {
+  opacity: 0.55;
+  background: #f5f1e6;
+  border-style: dashed;
+}
+
+.oplog-item-main { flex: 1; min-width: 0; }
+
+.oplog-item-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.oplog-type-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.type-create-event { background: #eafaf1; color: #27ae60; }
+.type-edit-event { background: #eef5ff; color: #2980b9; }
+.type-adjust-limit { background: #fff4e6; color: #e67e22; }
+.type-approve-signup { background: #e9f7ef; color: #27ae60; }
+.type-reject-signup { background: #fdecea; color: #e74c3c; }
+.type-check-in { background: #f0e6ff; color: #8e44ad; }
+.type-cancel-signup { background: #feece2; color: #d35400; }
+.type-csv-import { background: #eef8fa; color: #16a085; }
+.type-update-reader-note { background: #fdf2e9; color: #c0392b; }
+
+.oplog-undone-tag {
+  font-size: 11px;
+  color: #9c9078;
+  background: #ebe3d2;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.oplog-item-desc {
+  font-size: 14px;
+  font-weight: 500;
+  color: #3d382e;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.oplog-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  color: #9c9078;
+}
+
+.oplog-item-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.undo-btn {
+  background: #fff;
+  color: #e67e22;
+  border: 1px solid #f5d7b5;
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.undo-btn:hover {
+  background: #fff4e6;
+  border-color: #e67e22;
+  transform: translateY(-1px);
+}
+
+.undo-btn:active { transform: translateY(0); }
+
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } .oplog-panel { width: 100vw; } }
 </style>

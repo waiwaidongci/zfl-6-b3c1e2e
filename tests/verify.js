@@ -812,6 +812,395 @@ assertEqual(e1Dashboard.groupsSummary.pending, 0, '视图筛选后待审核=0（
 writeViews([]);
 assertEqual(readViews().length, 0, '测试结束后清空视图数据');
 
+console.log('\n=== 操作日志与撤销功能测试 ===\n');
+
+import {
+  OPERATION_TYPES,
+  OPERATION_LABELS,
+  readOperationLogs,
+  writeOperationLogs,
+  clearOperationLogs,
+  recordOperation,
+  undoOperation,
+  undoLastNOperations,
+  getUndoableLogs,
+  buildBeforeStateSnapshot,
+  buildAfterStateSnapshot,
+  generateDescription
+} from '../src/lib/utils/operationLog.js';
+import {
+  getReaderStats,
+  getAllReadersStats
+} from '../src/lib/utils/readerStats.js';
+
+clearOperationLogs();
+
+console.log('--- 日志基础读写 ---');
+assertEqual(readOperationLogs().length, 0, '初始操作日志为空');
+
+const sampleBefore = buildBeforeStateSnapshot({
+  events: [{ id: 'ev1', book: '秋园', limit: 8 }],
+  signups: [{ id: 'sg1', eventId: 'ev1', name: '张三', status: '正式', reviewStatus: '已通过' }],
+  readers: [{ id: 'r1', name: '张三', phone: '13800000001', note: '老读者' }],
+  mySignupIds: ['sg1'],
+  series: []
+});
+
+const sampleAfter = buildAfterStateSnapshot(sampleBefore, {
+  events: [{ id: 'ev1', book: '秋园', limit: 10 }],
+  signups: [
+    { id: 'sg1', eventId: 'ev1', name: '张三', status: '正式', reviewStatus: '已通过' },
+    { id: 'sg2', eventId: 'ev1', name: '李四', status: '候补', reviewStatus: '已通过', waitlistPosition: 1 }
+  ],
+  readers: sampleBefore.readers,
+  mySignupIds: ['sg1'],
+  series: []
+});
+
+const rec1 = recordOperation(
+  [],
+  OPERATION_TYPES.ADJUST_LIMIT,
+  generateDescription(OPERATION_TYPES.ADJUST_LIMIT, { eventId: 'ev1', eventName: '秋园' }, { beforeLimit: 8, afterLimit: 10 }),
+  { eventId: 'ev1', eventName: '秋园' },
+  sampleBefore,
+  sampleAfter,
+  { beforeLimit: 8, afterLimit: 10 }
+);
+assert(rec1.log.id !== undefined, '记录日志返回带id的log对象');
+assertEqual(rec1.logs.length, 1, '记录后日志有1条');
+assertEqual(rec1.log.type, OPERATION_TYPES.ADJUST_LIMIT, '日志类型正确');
+assert(rec1.log.description.includes('秋园'), '日志描述包含活动名');
+assertEqual(rec1.log.undone, false, '新日志未撤销');
+
+const readBack = readOperationLogs();
+assertEqual(readBack.length, 1, '从localStorage读取到1条日志');
+
+console.log('\n--- generateDescription 覆盖验证 ---');
+const allTypes = Object.values(OPERATION_TYPES);
+for (const t of allTypes) {
+  const desc = generateDescription(t, { eventName: '测试活动', readerName: '测试读者' }, { name: '测试', book: '测试书' });
+  assert(desc.length > 0, `generateDescription(${t}) 生成非空描述`);
+}
+
+console.log('\n--- 多条日志 & MAX_LOGS 截断 ---');
+let manyLogs = [];
+for (let i = 0; i < 250; i++) {
+  const res = recordOperation(
+    manyLogs,
+    OPERATION_TYPES.CHECK_IN,
+    `签到操作 #${i}`,
+    { signupId: `sg-${i}` },
+    buildBeforeStateSnapshot({ events: [], signups: [], readers: [], mySignupIds: [], series: [] }),
+    buildAfterStateSnapshot({}, { events: [], signups: [], readers: [], mySignupIds: [], series: [] }),
+    { seq: i }
+  );
+  manyLogs = res.logs;
+}
+assertEqual(manyLogs.length, 200, '日志超过MAX_LOGS后自动截断到200');
+assertEqual(manyLogs[0].metadata.seq, 249, '最新日志在最前面（LIFO）');
+
+clearOperationLogs();
+assertEqual(readOperationLogs().length, 0, '清空后日志为0');
+
+console.log('\n=== 撤销场景：创建活动 → 撤销 ===\n');
+clearOperationLogs();
+let stateA = {
+  events: [{ id: 'ev-old', book: '老活动', limit: 5, status: '开放报名', reviewRequired: false }],
+  signups: [], readers: [], mySignupIds: [], series: []
+};
+const beforeCreate = buildBeforeStateSnapshot(stateA);
+const newEvent = { id: 'ev-new', book: '新活动', host: '新主办', time: '2025-09-01T19:00', limit: 12, status: '开放报名', reviewRequired: false };
+let stateB = { ...stateA, events: [newEvent, ...stateA.events] };
+const afterCreate = buildAfterStateSnapshot(beforeCreate, stateB);
+const createRec = recordOperation(
+  [],
+  OPERATION_TYPES.CREATE_EVENT,
+  generateDescription(OPERATION_TYPES.CREATE_EVENT, { eventId: newEvent.id, eventName: newEvent.book }, { book: newEvent.book }),
+  { eventId: newEvent.id, eventName: newEvent.book },
+  beforeCreate,
+  afterCreate,
+  { book: newEvent.book, host: newEvent.host }
+);
+assertEqual(stateB.events.length, 2, '创建后有2个活动');
+assert(stateB.events.some((e) => e.id === 'ev-new'), '新活动存在于stateB');
+
+const undoCreate = undoOperation(createRec.logs, createRec.log.id, stateB);
+assert(undoCreate.success, '撤销创建活动成功');
+assertEqual(undoCreate.state.events.length, 1, '撤销后只剩1个活动');
+assert(!undoCreate.state.events.some((e) => e.id === 'ev-new'), '撤销后新活动已移除');
+assertEqual(undoCreate.logs[0].undone, true, '日志标记为已撤销');
+assert(undoCreate.logs[0].undoTime !== null, '撤销时间已记录');
+
+const doubleUndo = undoOperation(undoCreate.logs, createRec.log.id, undoCreate.state);
+assert(!doubleUndo.success, '重复撤销失败');
+assertEqual(doubleUndo.reason, '该操作已撤销', '错误原因正确');
+
+console.log('\n=== 撤销场景：调整名额触发候补转正 → 撤销 ===\n');
+clearOperationLogs();
+const eventWL = { id: 'ev-wl', book: '候补活动', host: 'H', time: '2025-08-15T19:00', limit: 2, status: '开放报名', reviewRequired: false };
+let stateC = {
+  events: [eventWL],
+  signups: [
+    { id: 's1', eventId: 'ev-wl', name: 'A', phone: '1', status: '正式', reviewStatus: '已通过', _wasWaitlisted: false },
+    { id: 's2', eventId: 'ev-wl', name: 'B', phone: '2', status: '正式', reviewStatus: '已通过', _wasWaitlisted: false },
+    { id: 's3', eventId: 'ev-wl', name: 'C', phone: '3', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, _wasWaitlisted: false, createdAt: '2025-08-01 10:00:00', reviewedAt: '2025-08-01 10:00:00' },
+    { id: 's4', eventId: 'ev-wl', name: 'D', phone: '4', status: '候补', reviewStatus: '已通过', waitlistPosition: 2, _wasWaitlisted: false, createdAt: '2025-08-01 10:01:00', reviewedAt: '2025-08-01 10:01:00' }
+  ],
+  readers: [], mySignupIds: [], series: []
+};
+const beforeLimit = buildBeforeStateSnapshot(stateC);
+const stateCEventsExpanded = stateC.events.map((e) => e.id === 'ev-wl' ? { ...e, limit: 4 } : e);
+const promotedSignups = promoteFromWaitlist(stateCEventsExpanded, stateC.signups, 'ev-wl');
+let stateD = { ...stateC, events: stateCEventsExpanded, signups: promotedSignups };
+const afterLimit = buildAfterStateSnapshot(beforeLimit, stateD);
+
+const regularAfter = stateD.signups.filter((s) => s.eventId === 'ev-wl' && s.status === '正式');
+assertEqual(regularAfter.length, 4, '名额2→4后，4人全部正式');
+const promotedNow = regularAfter.filter((s) => s._wasWaitlisted);
+assertEqual(promotedNow.length, 2, '有2人由候补转正');
+
+const adjustRec = recordOperation(
+  [],
+  OPERATION_TYPES.ADJUST_LIMIT,
+  generateDescription(OPERATION_TYPES.ADJUST_LIMIT, { eventId: 'ev-wl', eventName: '候补活动' }, { beforeLimit: 2, afterLimit: 4 }),
+  { eventId: 'ev-wl', eventName: '候补活动' },
+  beforeLimit, afterLimit,
+  { beforeLimit: 2, afterLimit: 4 }
+);
+const undoAdjust = undoOperation(adjustRec.logs, adjustRec.log.id, stateD);
+assert(undoAdjust.success, '撤销调整名额成功');
+
+const restoredSignups = undoAdjust.state.signups;
+const restoredEvent = undoAdjust.state.events.find((e) => e.id === 'ev-wl');
+assertEqual(Number(restoredEvent.limit), 2, '撤销后名额恢复为2');
+
+const restoredRegular = restoredSignups.filter((s) => s.eventId === 'ev-wl' && s.status === '正式');
+const restoredWaitlist = restoredSignups.filter((s) => s.eventId === 'ev-wl' && s.status === '候补');
+assertEqual(restoredRegular.length, 2, '撤销后正式名额=2（与原limit一致）');
+assertEqual(restoredWaitlist.length, 2, '撤销后候补有2人');
+
+const restoredPositions = restoredWaitlist.map((s) => s.waitlistPosition).sort((a, b) => a - b);
+assert(JSON.stringify(restoredPositions) === '[1,2]', `候补顺序重新编号正确 [${restoredPositions}]`);
+
+console.log('\n=== 撤销场景：审核通过/拒绝/签到/取消报名 → 撤销 ===\n');
+clearOperationLogs();
+const revEvent = { id: 'ev-rev', book: '审核活动', host: 'H', time: '2025-09-01T19:00', limit: 2, status: '开放报名', reviewRequired: true };
+let stateE = {
+  events: [revEvent],
+  signups: [
+    { id: 'p1', eventId: 'ev-rev', name: '待审核1', phone: '111', status: '待审核', reviewStatus: '待审核', checkedIn: false, checkedInAt: '' },
+    { id: 'p2', eventId: 'ev-rev', name: '待审核2', phone: '222', status: '待审核', reviewStatus: '待审核', checkedIn: false, checkedInAt: '' },
+    { id: 'rej', eventId: 'ev-rev', name: '已拒绝', phone: '333', status: '正式', reviewStatus: '已通过', checkedIn: true, checkedInAt: '2025-09-01 20:00:00', _wasWaitlisted: false }
+  ],
+  readers: [], mySignupIds: ['p1', 'p2', 'rej'], series: []
+};
+
+const beforeApprove = buildBeforeStateSnapshot(stateE);
+const afterApproveSignups = approveSignup(stateE.events, stateE.signups, 'p1');
+let stateF = { ...stateE, signups: afterApproveSignups };
+const afterApprove = buildAfterStateSnapshot(beforeApprove, stateF);
+const approveRec = recordOperation(
+  [], OPERATION_TYPES.APPROVE_SIGNUP,
+  generateDescription(OPERATION_TYPES.APPROVE_SIGNUP, { signupId: 'p1', eventName: '审核活动', readerName: '待审核1' }, { name: '待审核1' }),
+  { signupId: 'p1', eventId: 'ev-rev', readerName: '待审核1', eventName: '审核活动' },
+  beforeApprove, afterApprove, { name: '待审核1' }
+);
+stateF.signups.find((s) => s.id === 'p1').reviewStatus === '已通过' && assert(true, 'p1审核通过');
+
+const beforeReject = buildBeforeStateSnapshot(stateF);
+const afterRejectSignups = rejectSignup(stateF.signups, 'p2', '内容不符合');
+let stateG = { ...stateF, signups: afterRejectSignups };
+const afterReject = buildAfterStateSnapshot(beforeReject, stateG);
+const rejectRec = recordOperation(
+  approveRec.logs, OPERATION_TYPES.REJECT_SIGNUP,
+  generateDescription(OPERATION_TYPES.REJECT_SIGNUP, { signupId: 'p2', readerName: '待审核2', eventName: '审核活动' }, { name: '待审核2' }),
+  { signupId: 'p2', eventId: 'ev-rev', readerName: '待审核2', eventName: '审核活动' },
+  beforeReject, afterReject, { name: '待审核2', rejectionReason: '内容不符合' }
+);
+
+const beforeCheckin = buildBeforeStateSnapshot(stateG);
+const afterCheckinSignups = toggleCheckIn(stateG.signups, 'p1');
+let stateH = { ...stateG, signups: afterCheckinSignups };
+const afterCheckin = buildAfterStateSnapshot(beforeCheckin, stateH);
+const checkinRec = recordOperation(
+  rejectRec.logs, OPERATION_TYPES.CHECK_IN,
+  generateDescription(OPERATION_TYPES.CHECK_IN, { signupId: 'p1', readerName: '待审核1', eventName: '审核活动' }, { name: '待审核1', checkedIn: true }),
+  { signupId: 'p1', eventId: 'ev-rev', readerName: '待审核1', eventName: '审核活动' },
+  beforeCheckin, afterCheckin, { name: '待审核1', checkedIn: true }
+);
+assertEqual(stateH.signups.find((s) => s.id === 'p1').checkedIn, true, 'p1已签到');
+
+const beforeCancel = buildBeforeStateSnapshot(stateH);
+const cancelSignupResult = handleSignupCancel(stateH.events, stateH.signups, stateH.mySignupIds, 'rej');
+let stateI = { ...stateH, signups: cancelSignupResult.signups, mySignupIds: cancelSignupResult.mySignupIds };
+const afterCancelSnapshot = buildAfterStateSnapshot(beforeCancel, stateI);
+const cancelRec = recordOperation(
+  checkinRec.logs, OPERATION_TYPES.CANCEL_SIGNUP,
+  generateDescription(OPERATION_TYPES.CANCEL_SIGNUP, { signupId: 'rej', readerName: '已拒绝', eventName: '审核活动' }, { name: '已拒绝' }),
+  { signupId: 'rej', eventId: 'ev-rev', readerName: '已拒绝', eventName: '审核活动' },
+  beforeCancel, afterCancelSnapshot, { name: '已拒绝', originalSignup: stateH.signups.find((s) => s.id === 'rej') }
+);
+assertEqual(stateI.mySignupIds.includes('rej'), false, '取消报名后mySignupIds不含rej');
+
+const undoCancel = undoOperation(cancelRec.logs, cancelRec.log.id, stateI);
+assert(undoCancel.success, '撤销取消报名成功');
+assert(undoCancel.state.signups.some((s) => s.id === 'rej'), '撤销后rej报名恢复');
+assert(undoCancel.state.mySignupIds.includes('rej'), '撤销后mySignupIds恢复rej');
+
+const undoCheckin = undoOperation(undoCancel.logs, checkinRec.log.id, undoCancel.state);
+assert(undoCheckin.success, '撤销签到成功');
+assertEqual(undoCheckin.state.signups.find((s) => s.id === 'p1').checkedIn, false, '撤销后p1签到状态恢复为false');
+
+const undoReject = undoOperation(undoCheckin.logs, rejectRec.log.id, undoCheckin.state);
+assert(undoReject.success, '撤销拒绝成功');
+const p2AfterUndoReject = undoReject.state.signups.find((s) => s.id === 'p2');
+assertEqual(p2AfterUndoReject.reviewStatus, '待审核', '撤销后p2恢复为待审核');
+
+const undoApprove = undoOperation(undoReject.logs, approveRec.log.id, undoReject.state);
+assert(undoApprove.success, '撤销审核通过成功');
+assertEqual(undoApprove.state.signups.find((s) => s.id === 'p1').reviewStatus, '待审核', '撤销后p1恢复为待审核');
+
+console.log('\n=== 撤销场景：批量撤销最近N次操作 ===\n');
+clearOperationLogs();
+let batchState = { events: [], signups: [], readers: [], mySignupIds: [], series: [] };
+let batchLogs = [];
+
+const bEvent1 = { id: 'bev1', book: '批量测试活动1', host: 'H1', time: '2025-10-01T19:00', limit: 5, status: '开放报名', reviewRequired: false };
+const bBefore1 = buildBeforeStateSnapshot(batchState);
+batchState = { ...batchState, events: [bEvent1, ...batchState.events] };
+const bAfter1 = buildAfterStateSnapshot(bBefore1, batchState);
+batchLogs = recordOperation(batchLogs, OPERATION_TYPES.CREATE_EVENT, `创建活动：批量测试活动1`, { eventId: 'bev1' }, bBefore1, bAfter1, {}).logs;
+
+const bEvent2 = { id: 'bev2', book: '批量测试活动2', host: 'H2', time: '2025-10-02T19:00', limit: 5, status: '开放报名', reviewRequired: false };
+const bBefore2 = buildBeforeStateSnapshot(batchState);
+batchState = { ...batchState, events: [bEvent2, ...batchState.events] };
+const bAfter2 = buildAfterStateSnapshot(bBefore2, batchState);
+batchLogs = recordOperation(batchLogs, OPERATION_TYPES.CREATE_EVENT, `创建活动：批量测试活动2`, { eventId: 'bev2' }, bBefore2, bAfter2, {}).logs;
+
+const bSignup = { id: 'bsg1', eventId: 'bev1', name: '批量测试用户', phone: '999', status: '正式', reviewStatus: '已通过', readerId: 'br1' };
+const bReader = { id: 'br1', name: '批量测试用户', phone: '999', note: '', tags: [], createdAt: '2025-01-01', updatedAt: '2025-01-01' };
+const bBefore3 = buildBeforeStateSnapshot(batchState);
+batchState = {
+  ...batchState,
+  signups: [bSignup, ...batchState.signups],
+  readers: [bReader, ...batchState.readers],
+  mySignupIds: ['bsg1']
+};
+const bAfter3 = buildAfterStateSnapshot(bBefore3, batchState);
+batchLogs = recordOperation(batchLogs, OPERATION_TYPES.CSV_IMPORT, `CSV导入：新增1条报名，0个活动`, { signupIds: ['bsg1'] }, bBefore3, bAfter3, { newSignupCount: 1, newEventCount: 0 }).logs;
+
+writeOperationLogs(batchLogs);
+assertEqual(batchState.events.length, 2, '批量操作后有2个活动');
+assertEqual(batchState.signups.length, 1, '批量操作后有1条报名');
+assertEqual(getUndoableLogs(batchLogs).length, 3, '有3条可撤销日志');
+
+const batchUndo2 = undoLastNOperations(batchLogs, 2, batchState);
+assertEqual(batchUndo2.undoneCount, 2, '批量撤销成功撤销2条');
+assertEqual(batchUndo2.state.events.length, 1, '撤销后剩1个活动');
+assertEqual(batchUndo2.state.signups.length, 0, 'CSV导入撤销后报名数为0');
+assertEqual(batchUndo2.state.readers.length, 0, 'CSV导入撤销后读者数为0');
+
+const finalUndo = undoLastNOperations(batchUndo2.logs, 100, batchUndo2.state);
+assertEqual(finalUndo.undoneCount, 1, '超过剩余数量时只撤销剩余的1条');
+assertEqual(finalUndo.state.events.length, 0, '全部撤销后活动数为0');
+
+const noMoreUndo = undoLastNOperations(finalUndo.logs, 1, finalUndo.state);
+assert(!noMoreUndo.success, '无可撤销操作时返回失败');
+
+console.log('\n=== 撤销后运营指标 & 读者统计一致性验证 ===\n');
+clearOperationLogs();
+
+const consistencyEvent = { id: 'ev-con', book: '一致性测试', host: 'H', time: '2025-07-01T19:00', limit: 3, status: '开放报名', reviewRequired: false };
+let conState = {
+  events: [consistencyEvent],
+  signups: [
+    { id: 'c1', eventId: 'ev-con', name: '甲', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: true, readerId: 'cr1', _wasWaitlisted: false },
+    { id: 'c2', eventId: 'ev-con', name: '乙', phone: '2', status: '正式', reviewStatus: '已通过', checkedIn: false, readerId: 'cr2', _wasWaitlisted: false },
+    { id: 'c3', eventId: 'ev-con', name: '丙', phone: '3', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, readerId: 'cr3', _wasWaitlisted: false }
+  ],
+  readers: [
+    { id: 'cr1', name: '甲', phone: '1', note: '', tags: [], createdAt: '2025-01-01', updatedAt: '2025-01-01' },
+    { id: 'cr2', name: '乙', phone: '2', note: '', tags: [], createdAt: '2025-01-02', updatedAt: '2025-01-02' },
+    { id: 'cr3', name: '丙', phone: '3', note: '候补常客', tags: [], createdAt: '2025-01-03', updatedAt: '2025-01-03' }
+  ],
+  mySignupIds: ['c1', 'c2', 'c3'], series: []
+};
+
+function computeConsistencyMetrics(state) {
+  const es = getEventStats(state.events, state.signups, []);
+  const agg = getAggregateStats(es);
+  const allReaderStats = getAllReadersStats(state.readers, state.signups, state.events);
+  return { es, agg, allReaderStats };
+}
+
+const metricsBefore = computeConsistencyMetrics(conState);
+assertEqual(metricsBefore.es[0].regularCount, 2, '操作前 regularCount=2');
+assertEqual(metricsBefore.es[0].waitlistCount, 1, '操作前 waitlistCount=1');
+assertEqual(metricsBefore.es[0].checkedInCount, 1, '操作前 checkedInCount=1');
+assertEqual(metricsBefore.agg.totalCheckedIn, 1, '操作前 aggregate.totalCheckedIn=1');
+
+const conBefore = buildBeforeStateSnapshot(conState);
+const expandedEvents = conState.events.map((e) => e.id === 'ev-con' ? { ...e, limit: 4 } : e);
+const promotedSignupsCon = promoteFromWaitlist(expandedEvents, conState.signups, 'ev-con');
+let conStateAfter = { ...conState, events: expandedEvents, signups: promotedSignupsCon };
+const conAfter = buildAfterStateSnapshot(conBefore, conStateAfter);
+const conRec = recordOperation(
+  [], OPERATION_TYPES.ADJUST_LIMIT,
+  `调整名额：一致性测试 3→4`,
+  { eventId: 'ev-con', eventName: '一致性测试' },
+  conBefore, conAfter, { beforeLimit: 3, afterLimit: 4 }
+);
+
+const metricsAfter = computeConsistencyMetrics(conStateAfter);
+assertEqual(metricsAfter.es[0].regularCount, 3, '名额4→ waitlist转正后 regularCount=3');
+assertEqual(metricsAfter.es[0].waitlistCount, 0, '转正后 waitlistCount=0');
+assertEqual(metricsAfter.es[0].promotedCount, 1, 'promotedCount=1（丙被转正）');
+const cr3StatsAfter = metricsAfter.allReaderStats.find((r) => r.reader.id === 'cr3');
+assertEqual(cr3StatsAfter.stats.promoted, 1, '丙的读者档案中 promoted=1');
+
+const conUndo = undoOperation(conRec.logs, conRec.log.id, conStateAfter);
+assert(conUndo.success, '撤销调整名额成功');
+
+const metricsRestored = computeConsistencyMetrics(conUndo.state);
+assertEqual(metricsRestored.es[0].regularCount, metricsBefore.es[0].regularCount, '撤销后 regularCount 与操作前一致');
+assertEqual(metricsRestored.es[0].waitlistCount, metricsBefore.es[0].waitlistCount, '撤销后 waitlistCount 与操作前一致');
+assertEqual(metricsRestored.es[0].checkedInCount, metricsBefore.es[0].checkedInCount, '撤销后 checkedInCount 与操作前一致');
+assertEqual(metricsRestored.agg.totalCheckedIn, metricsBefore.agg.totalCheckedIn, '撤销后 aggregate.totalCheckedIn 与操作前一致');
+assertEqual(metricsRestored.agg.totalSignups, metricsBefore.agg.totalSignups, '撤销后 aggregate.totalSignups 与操作前一致');
+
+const cr3StatsRestored = metricsRestored.allReaderStats.find((r) => r.reader.id === 'cr3');
+assertEqual(cr3StatsRestored.stats.totalEvents, 0, '撤销后丙的 totalEvents 恢复为0（候补不算正式参加）');
+assertEqual(cr3StatsRestored.stats.waitlisted, 1, '撤销后丙的 waitlisted 恢复为1');
+assertEqual(cr3StatsRestored.stats.promoted, 0, '撤销后丙的 promoted 恢复为0');
+
+const restoredWaitlistPos = conUndo.state.signups.filter((s) => s.status === '候补').map((s) => s.waitlistPosition);
+assert(JSON.stringify(restoredWaitlistPos) === '[1]', `撤销后候补顺序正确 [${restoredWaitlistPos}]`);
+
+const restoredReaderNote = conUndo.state.readers.find((r) => r.id === 'cr3')?.note;
+assertEqual(restoredReaderNote, '候补常客', '撤销后读者备注信息未被破坏');
+
+console.log('\n=== 兼容性：旧数据（无operation-logs key） ===\n');
+clearOperationLogs();
+localStorage.removeItem('zfl-6-operation-logs');
+assertEqual(readOperationLogs().length, 0, '缺失key时返回空数组（兼容旧数据）');
+
+const badStored = 'this is not json';
+localStorage.setItem('zfl-6-operation-logs', badStored);
+assertEqual(readOperationLogs().length, 0, '损坏JSON时返回空数组（容错）');
+
+const invalidStructure = '{ "notAnArray": true }';
+localStorage.setItem('zfl-6-operation-logs', invalidStructure);
+assertEqual(readOperationLogs().length, 0, '非数组结构时返回空数组（兼容性）');
+
+const partialLogs = JSON.stringify([{ id: 'old1', type: 'EDIT_EVENT' }]);
+localStorage.setItem('zfl-6-operation-logs', partialLogs);
+const normalized = readOperationLogs();
+assertEqual(normalized.length, 1, '缺字段日志能被normalize');
+assert(normalized[0].timestamp !== undefined, '缺timestamp的日志被补充');
+assertEqual(normalized[0].undone, false, '缺undone的日志被设为false');
+
+clearOperationLogs();
+
 console.log('\n' + '='.repeat(40));
 console.log(`结果: ${passed} 通过, ${failed} 失败`);
 if (failed > 0) {
