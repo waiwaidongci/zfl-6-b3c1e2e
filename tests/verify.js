@@ -1941,6 +1941,576 @@ assertEqual(readerStatsResult.totalSignups, 1, 'batchReaderStats：读者总报�
 assertEqual(readerStatsResult.latestAnswer, '备注', 'batchReaderStats：读者最新回答正确');
 
 
+import {
+  CSV_SAMPLES,
+  BASE_EVENTS,
+  BASE_SIGNUPS,
+  BASE_READERS
+} from './csvImportFixtures.js';
+import {
+  autoDetectMapping,
+  previewImport,
+  applyImport,
+  SYSTEM_FIELDS,
+  CONFLICT_STRATEGIES
+} from '../src/lib/utils/csvTools.js';
+import {
+  findReaderByPhone
+} from '../src/lib/utils/readerStore.js';
+
+function mockIsoFn(daysOffset = 7) {
+  const d = new Date();
+  d.setDate(d.getDate() + daysOffset);
+  return d.toISOString().slice(0, 10);
+}
+
+console.log('\n=== CSV导入回归测试：字段自动识别 ===\n');
+
+console.log('--- autoDetectMapping：标准表头 ---');
+const stdParsed = parseCsv(CSV_SAMPLES.standardHeaders);
+const stdMapping = autoDetectMapping(stdParsed.headers);
+assertEqual(stdMapping.activity, '0', '标准表头：活动→第0列');
+assertEqual(stdMapping.name, '1', '标准表头：姓名→第1列');
+assertEqual(stdMapping.phone, '2', '标准表头：手机→第2列');
+assertEqual(stdMapping.answer, '3', '标准表头：回答→第3列');
+assertEqual(stdMapping.signupType, '4', '标准表头：报名类型→第4列');
+assertEqual(stdMapping.reviewStatus, '5', '标准表头：审核状态→第5列');
+assertEqual(stdMapping.checkinStatus, '6', '标准表头：签到状态→第6列');
+assertEqual(stdMapping.wasWaitlisted, '7', '标准表头：候补转正标记→第7列');
+assertEqual(stdMapping.waitlistPosition, '8', '标准表头：候补顺序→第8列');
+assertEqual(stdMapping.signupTime, '9', '标准表头：报名时间→第9列');
+assertEqual(stdMapping.reviewTime, '10', '标准表头：审核时间→第10列');
+assertEqual(stdMapping.checkinTime, '11', '标准表头：签到时间→第11列');
+assertEqual(stdMapping.rejectionReason, '12', '标准表头：拒绝原因→第12列');
+
+console.log('\n--- autoDetectMapping：别名表头（书名/读者姓名/手机号） ---');
+const altParsed = parseCsv(CSV_SAMPLES.alternativeHeaders);
+const altMapping = autoDetectMapping(altParsed.headers);
+assertEqual(altMapping.activity, '0', '别名表头：书名→活动');
+assertEqual(altMapping.name, '1', '别名表头：读者姓名→姓名');
+assertEqual(altMapping.phone, '2', '别名表头：手机号→手机');
+assertEqual(altMapping.answer, '3', '别名表头：备注→回答');
+assertEqual(altMapping.signupType, '4', '别名表头：报名状态→报名类型');
+assertEqual(altMapping.reviewStatus, '5', '别名表头：审核→审核状态');
+assertEqual(altMapping.checkinStatus, '6', '别名表头：到场状态→签到状态');
+assertEqual(altMapping.wasWaitlisted, '7', '别名表头：是否候补转正→候补转正标记');
+assertEqual(altMapping.waitlistPosition, '8', '别名表头：候补号→候补顺序');
+assertEqual(altMapping.signupTime, '9', '别名表头：创建时间→报名时间');
+assertEqual(altMapping.reviewTime, '10', '别名表头：处理时间→审核时间');
+assertEqual(altMapping.checkinTime, '11', '别名表头：到场时间→签到时间');
+assertEqual(altMapping.rejectionReason, '12', '别名表头：原因→拒绝原因');
+
+console.log('\n--- autoDetectMapping：极简表头（仅必要字段） ---');
+const minParsed = parseCsv(CSV_SAMPLES.minimalHeaders);
+const minMapping = autoDetectMapping(minParsed.headers);
+assertEqual(minMapping.activity, '0', '极简表头：活动识别');
+assertEqual(minMapping.name, '1', '极简表头：姓名识别');
+assertEqual(minMapping.phone, '2', '极简表头：手机识别');
+assert(minMapping.answer === undefined || minMapping.answer === '' || minMapping.answer === null, '极简表头：回答字段不识别');
+
+console.log('\n--- autoDetectMapping：英文表头（activity/name/phone） → 仅 wasWaitlisted 英文匹配，其余需手动映射 ---');
+const enParsed = parseCsv(CSV_SAMPLES.mixedEnglishHeaders);
+const enMapping = autoDetectMapping(enParsed.headers);
+assert(enMapping.activity === undefined || enMapping.activity === '', '英文表头：activity 无中文匹配，需手动映射');
+assert(enMapping.name === undefined || enMapping.name === '', '英文表头：name 无中文匹配，需手动映射');
+assert(enMapping.phone === undefined || enMapping.phone === '', '英文表头：phone 无中文匹配，需手动映射');
+assert(enMapping.answer === undefined || enMapping.answer === '', '英文表头：answer 无中文匹配，需手动映射');
+assert(enMapping.signupType === undefined || enMapping.signupType === '', '英文表头：signupType 无中文匹配，需手动映射');
+assert(enMapping.reviewStatus === undefined || enMapping.reviewStatus === '', '英文表头：reviewStatus 无中文匹配，需手动映射');
+assert(enMapping.checkinStatus === undefined || enMapping.checkinStatus === '', '英文表头：checkinStatus 无中文匹配，需手动映射');
+assertEqual(enMapping.wasWaitlisted, '7', '英文表头：wasWaitlisted 有英文精确匹配');
+
+console.log('\n--- autoDetectMapping：中文变体（是/已/转正） ---');
+const variantParsed = parseCsv(CSV_SAMPLES.chineseVariants);
+const variantMapping = autoDetectMapping(variantParsed.headers);
+assertEqual(variantMapping.activity, '0', '中文变体：活动');
+assertEqual(variantMapping.name, '1', '中文变体：姓名');
+assertEqual(variantMapping.phone, '2', '中文变体：手机');
+assertEqual(variantMapping.checkinStatus, '3', '中文变体：签到状态');
+assertEqual(variantMapping.wasWaitlisted, '4', '中文变体：候补转正');
+
+console.log('\n--- SYSTEM_FIELDS / CONFLICT_STRATEGIES 常量完整性 ---');
+const requiredKeys = ['activity', 'name', 'phone'];
+const sysKeys = SYSTEM_FIELDS.map((f) => f.key);
+for (const rk of requiredKeys) {
+  assert(sysKeys.includes(rk), `SYSTEM_FIELDS 包含必要字段 ${rk}`);
+}
+const activityField = SYSTEM_FIELDS.find((f) => f.key === 'activity');
+assert(activityField?.required === true, '活动字段标记为必填');
+const nameField = SYSTEM_FIELDS.find((f) => f.key === 'name');
+assert(nameField?.required === true, '姓名字段标记为必填');
+const phoneField = SYSTEM_FIELDS.find((f) => f.key === 'phone');
+assert(phoneField?.required === true, '手机字段标记为必填');
+
+const stratKeys = CONFLICT_STRATEGIES.map((s) => s.key);
+assertIncludes(stratKeys, 'skip', '冲突策略包含skip');
+assertIncludes(stratKeys, 'overwrite', '冲突策略包含overwrite');
+assertIncludes(stratKeys, 'checkinOnly', '冲突策略包含checkinOnly');
+
+console.log('\n=== CSV导入回归测试：手动字段映射 ===\n');
+
+console.log('--- previewImport：自动映射（默认） ---');
+const autoPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assert(autoPreview.errors.length === 0, `自动映射无错误：${autoPreview.errors.join('; ')}`);
+assert(autoPreview.preview !== null, '自动映射产生preview');
+assertEqual(autoPreview.stats.newSignupCount, 6, '自动映射：6条新报名');
+assertEqual(autoPreview.stats.newEventCount, 2, '自动映射：2个新活动（局外人/变形记不存在于BASE_EVENTS）');
+
+console.log('\n--- previewImport：缺失必填字段映射报错 ---');
+const badMappingPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  fieldMapping: { activity: '', name: '1', phone: '2' },
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assert(badMappingPreview.errors.length > 0, '缺失活动字段映射：报错');
+assert(badMappingPreview.preview === null, '缺失必填字段时preview为null');
+
+console.log('\n--- previewImport：手动映射覆盖自动识别 ---');
+const manualMappingPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  fieldMapping: { activity: '0', name: '1', phone: '2', answer: '', signupType: '', reviewStatus: '', checkinStatus: '', wasWaitlisted: '' },
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assert(manualMappingPreview.errors.length === 0, `手动映射无错误：${manualMappingPreview.errors.join('; ')}`);
+const firstManualSignup = manualMappingPreview.preview.signups.find((s) => s.phone === '13800001111');
+assert(firstManualSignup !== undefined, '手动映射：报名被创建');
+assertEqual(firstManualSignup.status, '正式', '手动映射：缺失报名类型/审核状态→默认为正式');
+assertEqual(firstManualSignup.answer, '', '手动映射：回答字段未映射→空字符串');
+
+console.log('\n=== CSV导入回归测试：重复报名冲突策略 ===\n');
+
+console.log('--- conflictStrategy=skip：跳过已有报名 ---');
+const skipPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assertEqual(skipPreview.stats.duplicateCount, 2, 'skip策略：2条重复（张三/赵六，手机13800001111/13800004444）');
+assertEqual(skipPreview.stats.updateCount, 0, 'skip策略：0条更新');
+const skipDupReasons = skipPreview.preview.duplicates.map((d) => d.reason);
+assert(skipDupReasons.every((r) => r.includes('已跳过')), 'skip策略：重复原因含"已跳过"');
+
+console.log('\n--- conflictStrategy=overwrite：覆盖全部字段 ---');
+const overwritePreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: [],
+  conflictStrategy: 'overwrite',
+  isoFn: mockIsoFn
+});
+assertEqual(overwritePreview.stats.duplicateCount, 0, 'overwrite策略：0条标记重复');
+assertEqual(overwritePreview.stats.updateCount, 2, 'overwrite策略：2条更新');
+const overwriteZhangsan = overwritePreview.preview.updates.find((u) => u.phone === '13800001111');
+assert(overwriteZhangsan !== undefined, 'overwrite策略：找到张三更新');
+assertEqual(overwriteZhangsan.updates.answer, '第一章', 'overwrite策略：回答字段被覆盖');
+assertEqual(overwriteZhangsan.updates.status, '正式', 'overwrite策略：状态保持正式');
+
+console.log('\n--- conflictStrategy=checkinOnly：仅补签到（无变化时跳过） ---');
+const checkinOnlyNoChangePreview = previewImport({
+  importCsvText: `活动,姓名,手机,签到状态,签到时间
+秋园,现有用户,13800009999,未到场,
+秋园,覆盖测试,13800001111,未到场,`,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: [],
+  conflictStrategy: 'checkinOnly',
+  isoFn: mockIsoFn
+});
+assertEqual(checkinOnlyNoChangePreview.stats.updateCount, 0, 'checkinOnly无变化：0条更新');
+assertEqual(checkinOnlyNoChangePreview.stats.duplicateCount, 2, 'checkinOnly无变化：2条跳过');
+
+console.log('\n--- conflictStrategy=checkinOnly：仅补签到（有变化时更新） ---');
+const checkinOnlyPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: [],
+  conflictStrategy: 'checkinOnly',
+  isoFn: mockIsoFn
+});
+const checkinZhaoliu = checkinOnlyPreview.preview.updates.find((u) => u.phone === '13800004444');
+assert(checkinZhaoliu !== undefined, 'checkinOnly策略：赵六签到变化被更新');
+assertEqual(checkinZhaoliu.updates.checkedIn, true, 'checkinOnly策略：checkedIn被更新为true');
+assertEqual(checkinZhaoliu.updates.checkedInAt, '2025-06-10 19:45', 'checkinOnly策略：checkedInAt被更新');
+assertEqual(checkinZhaoliu.updates.status, '已签到', 'checkinOnly策略：status更新为已签到');
+assert(checkinZhaoliu.updates.answer === undefined, 'checkinOnly策略：answer字段不更新');
+
+console.log('\n--- CSV内重复（同手机号同活动出现多次） ---');
+const csvDupPreview = previewImport({
+  importCsvText: CSV_SAMPLES.duplicatesWithinCsv,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assertEqual(csvDupPreview.stats.duplicateCount, 1, 'CSV内重复：1条重复');
+assertEqual(csvDupPreview.stats.newSignupCount, 2, 'CSV内重复：2条新报名（重复A第1条+重复B）');
+const csvDup = csvDupPreview.preview.duplicates[0];
+assertEqual(csvDup.conflictType, 'csv_duplicate', 'CSV内重复：conflictType=csv_duplicate');
+assert(csvDup.reason.includes('CSV内重复'), 'CSV内重复：原因说明正确');
+
+console.log('\n=== CSV导入回归测试：候补转正标记 ===\n');
+
+console.log('--- CSV中报名类型=候补转正 → _wasWaitlisted=true ---');
+const promotedTypePreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const wangwuSignup = promotedTypePreview.preview.signups.find((s) => s.phone === '13800003333');
+assert(wangwuSignup !== undefined, '找到王五（候补转正）');
+assertEqual(wangwuSignup.status, '候补转正', '报名类型=候补转正→status=候补转正');
+assertEqual(wangwuSignup._wasWaitlisted, true, '报名类型=候补转正→_wasWaitlisted=true');
+
+console.log('\n--- CSV中报名类型=正式 + wasWaitlisted=是 → status=候补转正 ---');
+const promotedFlagPreview = previewImport({
+  importCsvText: CSV_SAMPLES.partialFields,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const promotedNotCheckedIn = promotedFlagPreview.preview.signups.find((s) => s.phone === '13833330003');
+assert(promotedNotCheckedIn !== undefined, '找到转正未签到用户');
+assertEqual(promotedNotCheckedIn.status, '候补转正', '正式+wasWaitlisted=是→候补转正');
+assertEqual(promotedNotCheckedIn._wasWaitlisted, true, '_wasWaitlisted=true');
+
+console.log('\n--- CSV中中文变体wasWaitlisted=转正 → _wasWaitlisted=true ---');
+const variantPromotedPreview = previewImport({
+  importCsvText: CSV_SAMPLES.chineseVariants,
+  events: [{ id: 'csv-ev-d', book: '活动D', host: 'H', time: '2025-08-01T19:00', limit: 20, status: '开放报名', reviewRequired: false }],
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const variantPromoted = variantPromotedPreview.preview.signups.find((s) => s.phone === '13866660003');
+assert(variantPromoted !== undefined, '找到中文变体转正未签到');
+assertEqual(variantPromoted.status, '候补转正', '中文变体：候补转正=是→候补转正');
+assertEqual(variantPromoted._wasWaitlisted, true, '中文变体：_wasWaitlisted=true');
+
+console.log('\n=== CSV导入回归测试：签到状态 ===\n');
+
+console.log('--- CSV中签到状态=已到场 → checkedIn=true + status=已签到 ---');
+const checkinPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const zhaoliuSignup = checkinPreview.preview.signups.find((s) => s.phone === '13800004444');
+assert(zhaoliuSignup !== undefined, '找到赵六（已签到）');
+assertEqual(zhaoliuSignup.checkedIn, true, '签到状态=已到场→checkedIn=true');
+assertEqual(zhaoliuSignup.status, '已签到', '签到状态=已到场→status=已签到');
+assertEqual(zhaoliuSignup.checkedInAt, '2025-06-10 19:45', '签到状态=已到场→checkedInAt');
+
+console.log('\n--- CSV中签到状态=未到场 → checkedIn=false ---');
+const zhangsanSignup = checkinPreview.preview.signups.find((s) => s.phone === '13800001111');
+assert(zhangsanSignup !== undefined, '找到张三（未签到）');
+assertEqual(zhangsanSignup.checkedIn, false, '签到状态=未到场→checkedIn=false');
+assertEqual(zhangsanSignup.status, '正式', '签到状态=未到场→status=正式');
+
+console.log('\n--- 候补转正 + 已到场 → status=已签到 + _wasWaitlisted=true ---');
+const promotedAndCheckedIn = previewImport({
+  importCsvText: CSV_SAMPLES.partialFields,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const promotedCi = promotedAndCheckedIn.preview.signups.find((s) => s.phone === '13833330002');
+assert(promotedCi !== undefined, '找到转正签到用户');
+assertEqual(promotedCi.status, '已签到', '候补转正+已到场→status=已签到');
+assertEqual(promotedCi._wasWaitlisted, true, '候补转正+已到场→_wasWaitlisted=true');
+assertEqual(promotedCi.checkedIn, true, '候补转正+已到场→checkedIn=true');
+
+console.log('\n--- 中文变体签到状态=是/已 → checkedIn=true ---');
+const variantCheckinPreview = previewImport({
+  importCsvText: CSV_SAMPLES.chineseVariants,
+  events: [{ id: 'csv-ev-d', book: '活动D', host: 'H', time: '2025-08-01T19:00', limit: 20, status: '开放报名', reviewRequired: false }],
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const variantYes = variantCheckinPreview.preview.signups.find((s) => s.phone === '13866660001');
+assert(variantYes !== undefined, '找到签到状态=是');
+assertEqual(variantYes.checkedIn, true, '签到状态=是→checkedIn=true');
+assertEqual(variantYes.status, '已签到', '签到状态=是→status=已签到');
+
+const variantYi = variantCheckinPreview.preview.signups.find((s) => s.phone === '13866660002');
+assert(variantYi !== undefined, '找到签到状态=已');
+assertEqual(variantYi.checkedIn, true, '签到状态=已→checkedIn=true');
+assertEqual(variantYi.status, '已签到', '签到状态=已→status=已签到');
+assertEqual(variantYi._wasWaitlisted, true, '候补转正=转正→_wasWaitlisted=true');
+
+console.log('\n--- 仅checkinTime有值，无checkinStatus映射 → 自动推断签到 ---');
+const checkinTimeOnlyPreview = previewImport({
+  importCsvText: `活动,姓名,手机,签到时间
+秋园,时间签到,13899990001,2025-06-15 20:00`,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const timeOnlySignup = checkinTimeOnlyPreview.preview.signups.find((s) => s.phone === '13899990001');
+assert(timeOnlySignup !== undefined, '找到时间签到用户');
+assertEqual(timeOnlySignup.checkedIn, true, '仅签到时间有值→checkedIn=true');
+assertEqual(timeOnlySignup.status, '已签到', '仅签到时间有值→status=已签到');
+
+console.log('\n=== CSV导入回归测试：读者关联 ===\n');
+
+console.log('--- applyImport：新读者自动创建 ---');
+const newReaderPreview = previewImport({
+  importCsvText: CSV_SAMPLES.minimalHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const newReaderResult = applyImport(newReaderPreview.preview, []);
+assertEqual(newReaderResult.readers.length, 3, '新读者：3个读者被创建');
+assertEqual(newReaderResult.newSignups.length, 3, '新读者：3条报名');
+for (const sg of newReaderResult.newSignups) {
+  assert(sg.readerId !== undefined, `新报名 ${sg.name} 有readerId`);
+  const linkedReader = newReaderResult.readers.find((r) => r.id === sg.readerId);
+  assert(linkedReader !== undefined, `readerId ${sg.readerId} 存在于readers`);
+  assertEqual(linkedReader.phone, sg.phone, '读者手机号与报名手机号一致');
+  assertEqual(linkedReader.name, sg.name, '读者姓名与报名姓名一致');
+}
+
+console.log('\n--- applyImport：已有读者按手机号复用 ---');
+const existingReaderPreview = previewImport({
+  importCsvText: `活动,姓名,手机,回答
+秋园,现有用户,13800009999,新回答`,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: BASE_READERS,
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const existingReaderResult = applyImport(existingReaderPreview.preview, BASE_READERS);
+assertEqual(existingReaderResult.readers.length, 3, '已有读者：读者数保持3');
+const existingSignup = existingReaderResult.newSignups[0];
+assertEqual(existingSignup.readerId, 'csv-rd-existing-1', '已有读者：复用已有readerId');
+const reusedReader = findReaderByPhone(existingReaderResult.readers, '13800009999');
+assertEqual(reusedReader.id, 'csv-rd-existing-1', '复用的读者ID正确');
+assertEqual(reusedReader.note, '新回答', '复用的读者：CSV中的answer更新了读者note（upsertReader行为）');
+
+console.log('\n--- applyImport：新读者 + 已有读者混合场景 ---');
+const mixedReaderPreview = previewImport({
+  importCsvText: `活动,姓名,手机,回答
+秋园,现有用户,13800009999,老读者新报名
+秋园,全新用户,13877777777,新读者报名`,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: BASE_READERS,
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const mixedReaderResult = applyImport(mixedReaderPreview.preview, BASE_READERS);
+assertEqual(mixedReaderResult.readers.length, 4, '混合场景：3旧+1新=4个读者');
+const existingSg = mixedReaderResult.newSignups.find((s) => s.phone === '13800009999');
+assertEqual(existingSg.readerId, 'csv-rd-existing-1', '混合场景：老读者复用ID');
+const newSg = mixedReaderResult.newSignups.find((s) => s.phone === '13877777777');
+assert(newSg.readerId !== undefined && newSg.readerId !== 'csv-rd-existing-1', '混合场景：新读者有全新ID');
+
+console.log('\n--- applyImport：更新记录也关联读者 ---');
+const updateReaderPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: BASE_READERS,
+  conflictStrategy: 'overwrite',
+  isoFn: mockIsoFn
+});
+const updateReaderResult = applyImport(updateReaderPreview.preview, BASE_READERS);
+assertEqual(updateReaderResult.updatedSignups.length, 2, '更新：2条更新记录');
+for (const up of updateReaderResult.updatedSignups) {
+  assert(up.updates.readerId !== undefined, `更新记录 ${up.id} 有readerId`);
+  const updateReader = updateReaderResult.readers.find((r) => r.id === up.updates.readerId);
+  assert(updateReader !== undefined, '更新记录关联的读者存在');
+}
+
+console.log('\n=== CSV导入回归测试：完整数据流端到端 ===\n');
+
+console.log('--- parseCsv → autoDetectMapping → previewImport → applyImport 完整链路 ---');
+const fullFlowText = CSV_SAMPLES.standardHeaders;
+const fullParsed = parseCsv(fullFlowText);
+assert(fullParsed.headers.length > 0, '完整链路：parseCsv有headers');
+assert(fullParsed.rows.length === 6, '完整链路：parseCsv有6行数据');
+
+const fullMapping = autoDetectMapping(fullParsed.headers);
+assert(fullMapping.activity !== undefined, '完整链路：autoDetectMapping识别活动');
+
+const fullPreview = previewImport({
+  importCsvText: fullFlowText,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: BASE_READERS,
+  fieldMapping: fullMapping,
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assert(fullPreview.errors.length === 0, `完整链路：previewImport无错误 ${fullPreview.errors.join(';')}`);
+assertEqual(fullPreview.stats.totalRows, 6, '完整链路：总行数=6');
+assertEqual(fullPreview.stats.processedRows, 6, '完整链路：处理行数=6');
+assertEqual(fullPreview.stats.newSignupCount + fullPreview.stats.duplicateCount + fullPreview.stats.updateCount, 6, '完整链路：新+重复+更新=总行数');
+
+const csvFullResult = applyImport(fullPreview.preview, BASE_READERS);
+assert(csvFullResult.newEvents.length > 0, '完整链路：applyImport产生新活动');
+assert(csvFullResult.newSignups.length > 0, '完整链路：applyImport产生新报名');
+assert(csvFullResult.readers.length >= BASE_READERS.length, '完整链路：读者数不减少');
+
+console.log('\n--- 导入后状态与opsStats口径一致 ---');
+const allEventsAfter = [...BASE_EVENTS, ...csvFullResult.newEvents];
+const allSignupsAfter = [...BASE_SIGNUPS, ...csvFullResult.newSignups];
+const importStats = getEventStats(allEventsAfter, allSignupsAfter, []);
+const importGroups = getSignupGroupsSummary(importStats, allSignupsAfter);
+assert(importGroups.total > 0, '导入后：groupsSummary.total > 0');
+
+console.log('\n--- applyImport：预览为空时安全返回 ---');
+const emptyApply = applyImport(null, []);
+assertEqual(emptyApply.newEvents.length, 0, '空预览：newEvents=[]');
+assertEqual(emptyApply.newSignups.length, 0, '空预览：newSignups=[]');
+assertEqual(emptyApply.updatedSignups.length, 0, '空预览：updatedSignups=[]');
+assertEqual(emptyApply.readers.length, 0, '空预览：readers=[]');
+
+console.log('\n--- applyImport：更新保留原始报名ID ---');
+const preserveIdPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: BASE_SIGNUPS,
+  readers: BASE_READERS,
+  conflictStrategy: 'overwrite',
+  isoFn: mockIsoFn
+});
+const preserveIdResult = applyImport(preserveIdPreview.preview, BASE_READERS);
+const zhangsanUpdate = preserveIdResult.updatedSignups.find((u) => {
+  const orig = BASE_SIGNUPS.find((s) => s.phone === '13800001111');
+  return u.id === orig?.id;
+});
+assert(zhangsanUpdate !== undefined, '更新记录：保留原始报名ID');
+
+console.log('\n--- CSV带引号字段（逗号/双引号嵌套） ---');
+const quotedPreview = previewImport({
+  importCsvText: CSV_SAMPLES.quotedFields,
+  events: [],
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assert(quotedPreview.errors.length === 0, `引号字段无错误：${quotedPreview.errors.join(';')}`);
+const commaSignup = quotedPreview.preview.signups.find((s) => s.phone === '13877770001');
+assert(commaSignup !== undefined, '引号字段：找到带逗号的活动');
+assertEqual(commaSignup.name, '张,三', '引号字段：姓名内逗号被保留');
+assertEqual(commaSignup.answer, '第,一章', '引号字段：回答内逗号被保留');
+
+const quoteSignup = quotedPreview.preview.signups.find((s) => s.phone === '13877770002');
+assert(quoteSignup !== undefined, '引号字段：找到带引号的活动');
+assertEqual(quoteSignup.name, '李"四', '引号字段：姓名内双引号被保留');
+
+console.log('\n--- 审核状态与报名类型组合（待审核/已拒绝） ---');
+const reviewPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const pendingSignup = reviewPreview.preview.signups.find((s) => s.phone === '13800005555');
+assert(pendingSignup !== undefined, '找到钱七（待审核）');
+assertEqual(pendingSignup.status, '待审核', '审核状态=待审核→status=待审核');
+assertEqual(pendingSignup.reviewStatus, '待审核', '审核状态=待审核→reviewStatus=待审核');
+
+const rejectedSignup = reviewPreview.preview.signups.find((s) => s.phone === '13800006666');
+assert(rejectedSignup !== undefined, '找到孙八（已拒绝）');
+assertEqual(rejectedSignup.status, '已拒绝', '审核状态=已拒绝→status=已拒绝');
+assertEqual(rejectedSignup.reviewStatus, '已拒绝', '审核状态=已拒绝→reviewStatus=已拒绝');
+assert(rejectedSignup.rejectionReason.length > 0, '已拒绝报名：拒绝原因非空');
+
+console.log('\n--- 单独拒绝原因CSV（已拒绝+未提供原因默认填充） ---');
+const rejectedReasonPreview = previewImport({
+  importCsvText: CSV_SAMPLES.rejectedWithReason,
+  events: [
+    { id: 'csv-ev-b', book: '活动B', host: 'H', time: '2025-08-01T19:00', limit: 20, status: '开放报名', reviewRequired: false },
+    { id: 'csv-ev-c', book: '活动C', host: 'H', time: '2025-08-02T19:00', limit: 20, status: '开放报名', reviewRequired: false }
+  ],
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const rej1 = rejectedReasonPreview.preview.signups.find((s) => s.phone === '13855550001');
+assertEqual(rej1.rejectionReason, '内容不符合', '拒绝原因被正确导入');
+const rej2 = rejectedReasonPreview.preview.signups.find((s) => s.phone === '13855550002');
+assertEqual(rej2.rejectionReason, '名额已满', '第二条拒绝原因被正确导入');
+
+console.log('\n--- 候补顺序字段处理 ---');
+const waitlistPosPreview = previewImport({
+  importCsvText: CSV_SAMPLES.withWaitlistPosition,
+  events: [{ id: 'csv-ev-a', book: '活动A', host: 'H', time: '2025-08-01T19:00', limit: 20, status: '开放报名', reviewRequired: false }],
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+const wl1 = waitlistPosPreview.preview.signups.find((s) => s.phone === '13844440001');
+assertEqual(wl1.status, '候补', '候补类型→status=候补');
+assertEqual(wl1.waitlistPosition, 3, '候补顺序=3被保留');
+const wl2 = waitlistPosPreview.preview.signups.find((s) => s.phone === '13844440002');
+assertEqual(wl2.waitlistPosition, 1, '候补顺序=1被保留');
+
+console.log('\n--- 新活动自动创建（CSV中出现不存在的活动） ---');
+const newEventPreview = previewImport({
+  importCsvText: CSV_SAMPLES.standardHeaders,
+  events: BASE_EVENTS,
+  signups: [],
+  readers: [],
+  conflictStrategy: 'skip',
+  isoFn: mockIsoFn
+});
+assertEqual(newEventPreview.preview.events.length, 2, '2个新活动被创建（局外人/变形记）');
+const newEventBooks = newEventPreview.preview.events.map((e) => e.book).sort();
+assertIncludes(newEventBooks, '局外人', '新活动包含局外人');
+assertIncludes(newEventBooks, '变形记', '新活动包含变形记');
+for (const ev of newEventPreview.preview.events) {
+  assert(ev.id !== undefined, `新活动 ${ev.book} 有id`);
+  assertEqual(ev.status, '开放报名', `新活动 ${ev.book} 默认状态=开放报名`);
+  assertEqual(ev.limit, 20, `新活动 ${ev.book} 默认limit=20`);
+}
+
 console.log(`结果: ${passed} 通过, ${failed} 失败`);
 if (failed > 0) {
   console.error('\n⚠️ 有测试失败，请检查！');
