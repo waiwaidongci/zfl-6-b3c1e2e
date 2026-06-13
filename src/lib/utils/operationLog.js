@@ -40,7 +40,7 @@ export const OPERATION_LABELS = {
   [OPERATION_TYPES.UPDATE_READER_NOTE]: '修改读者备注',
   [OPERATION_TYPES.BATCH_CREATE_EVENTS]: '批量生成活动',
   [OPERATION_TYPES.BATCH_UPDATE_SERIES]: '批量更新系列',
-  [OPERATION_TYPES.UPDATE_EVENT_REVIEW]: '活动复盘'
+  [OPERATION_TYPES.UPDATE_EVENT_REVIEW]: '更新活动复盘'
 };
 
 function safeParse(str, fallback) {
@@ -525,7 +525,7 @@ export function generateDescription(type, target, metadata) {
     case OPERATION_TYPES.BATCH_UPDATE_SERIES:
       return `批量更新：${target.seriesName || ''} 更新${metadata?.updatedCount || 0}场${metadata?.limitChanged ? '（含名额调整）' : ''}`;
     case OPERATION_TYPES.UPDATE_EVENT_REVIEW:
-      return `活动复盘：${target.eventName || metadata?.book || '未知活动'}`;
+      return `更新复盘：${target.eventName || metadata?.book || '未知活动'}`;
     default:
       return '未知操作';
   }

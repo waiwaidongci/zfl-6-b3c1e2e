@@ -237,20 +237,34 @@
               {#if item.signup.rejectionReason}
                 <p class="rejectionReason">拒绝原因：{item.signup.rejectionReason}</p>
               {/if}
-              {#if item.review}
-                <div class="reviewMini">
-                  <span class="reviewMiniTitle">📝 活动复盘</span>
-                  {#if item.review.onSiteCount !== null && item.review.onSiteCount !== undefined}
-                    <span class="reviewMiniStat">现场 {item.review.onSiteCount} 人</span>
-                  {/if}
-                  {#if item.review.walkInCount !== null && item.review.walkInCount !== undefined}
-                    <span class="reviewMiniStat">临时 {item.review.walkInCount} 人</span>
-                  {/if}
+              {#if item.review && item.review.updatedAt}
+                <div class="reviewInfo">
+                  <div class="reviewInfoHeader">
+                    <span class="reviewLabel">活动复盘</span>
+                    <span class="reviewTime">{formatTime(item.review.updatedAt)}</span>
+                  </div>
                   {#if item.review.note}
-                    <p class="reviewMiniNote">{item.review.note}</p>
+                    <p class="reviewNote">复盘备注：{item.review.note}</p>
+                  {/if}
+                  <div class="reviewStats">
+                    {#if item.review.onSiteCount !== null}
+                      <span class="reviewStat">现场：{item.review.onSiteCount}</span>
+                    {/if}
+                    {#if item.review.walkInCount !== null}
+                      <span class="reviewStat">临时到场：{item.review.walkInCount}</span>
+                    {/if}
+                    {#if (item.review.onSiteCount !== null || item.review.walkInCount !== null) && isCheckedIn(item.signup.status)}
+                      <span class="reviewStat checked">您已签到</span>
+                    {/if}
+                  </div>
+                  {#if item.review.absenceReasons && !isCheckedIn(item.signup.status)}
+                    <p class="reviewAbsence">缺席原因记录：{item.review.absenceReasons}</p>
+                  {/if}
+                  {#if item.review.followUpReaders}
+                    <p class="reviewFollowUp">下次跟进：{item.review.followUpReaders}</p>
                   {/if}
                   {#if item.review.recommendedBooks}
-                    <p class="reviewMiniBooks">📚 推荐：{item.review.recommendedBooks}</p>
+                    <p class="reviewBooks">推荐书目：{item.review.recommendedBooks}</p>
                   {/if}
                 </div>
               {/if}
@@ -629,53 +643,92 @@
     color: #721c24;
   }
 
-  .reviewMini {
-    margin-top: 8px;
-    padding: 10px 12px;
-    background: #f0f7ff;
-    border: 1px solid #bbdefb;
-    border-radius: 6px;
-  }
-
-  .reviewMiniTitle {
-    display: block;
-    font-size: 12px;
-    font-weight: 600;
-    color: #1565c0;
-    margin-bottom: 6px;
-  }
-
-  .reviewMiniStat {
-    display: inline-block;
-    font-size: 12px;
-    color: #1565c0;
-    background: #e3f2fd;
-    padding: 2px 8px;
-    border-radius: 10px;
-    margin-right: 6px;
-    margin-bottom: 4px;
-  }
-
-  .reviewMiniNote {
-    margin: 6px 0 0;
-    font-size: 12px;
-    color: #37474f;
-    line-height: 1.5;
-    white-space: pre-wrap;
-  }
-
-  .reviewMiniBooks {
-    margin: 6px 0 0;
-    font-size: 12px;
-    color: #2e7d32;
-    line-height: 1.5;
-  }
-
   .signupTime {
     display: block;
     font-size: 11px;
     color: #999;
     margin-top: 4px;
+  }
+
+  .reviewInfo {
+    margin-top: 10px;
+    padding: 12px;
+    background: #e3f0fd;
+    border: 1px solid #b3d7f5;
+    border-radius: 6px;
+  }
+
+  .reviewInfoHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .reviewLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #0056b3;
+  }
+
+  .reviewTime {
+    font-size: 11px;
+    color: #666;
+  }
+
+  .reviewNote {
+    margin: 6px 0;
+    font-size: 13px;
+    color: #2a2822;
+    line-height: 1.5;
+  }
+
+  .reviewStats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 6px 0;
+  }
+
+  .reviewStat {
+    display: inline-block;
+    padding: 3px 8px;
+    background: #fff;
+    border-radius: 10px;
+    font-size: 12px;
+    color: #0056b3;
+  }
+
+  .reviewStat.checked {
+    background: #e6f4ea;
+    color: #1e7e34;
+  }
+
+  .reviewAbsence {
+    margin: 6px 0;
+    padding: 6px 10px;
+    background: #fff3cd;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #856404;
+  }
+
+  .reviewFollowUp {
+    margin: 6px 0;
+    padding: 6px 10px;
+    background: #fff;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #2a2822;
+  }
+
+  .reviewBooks {
+    margin: 6px 0;
+    padding: 6px 10px;
+    background: #f8f5ee;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #7b6b4e;
   }
 
   @media (max-width: 640px) {

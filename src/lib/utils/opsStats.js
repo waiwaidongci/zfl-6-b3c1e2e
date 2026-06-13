@@ -20,10 +20,6 @@ export function getEventStats(events, signups, series) {
     const checkedIn = approved.filter((s) => isCheckedIn(s.status));
     const promoted = approved.filter((s) => isPromoted(s.status));
     const limit = Number(event.limit);
-    const review = event.review || {};
-    const eventTime = new Date(event.time);
-    const isEnded = eventTime < now;
-    const hasReview = !!(review.note || review.onSiteCount !== null || review.walkInCount !== null || review.absenceReasons || review.followUpReaders || review.recommendedBooks);
 
     const signupConversionRate = eventSignups.length > 0
       ? Math.round((approved.length / eventSignups.length) * 100)
@@ -45,12 +41,25 @@ export function getEventStats(events, signups, series) {
       ? Math.round((rejected.length / eventSignups.length) * 100)
       : 0;
 
-    const onSiteCount = review.onSiteCount !== undefined && review.onSiteCount !== null ? Number(review.onSiteCount) : null;
-    const walkInCount = review.walkInCount !== undefined && review.walkInCount !== null ? Number(review.walkInCount) : null;
-    const attendanceDiff = onSiteCount !== null ? Math.abs(onSiteCount - checkedIn.length) : null;
-
     const s = series.find((sr) => sr.id === event.seriesId);
     const seriesName = s ? s.title : null;
+
+    const hasReview = !!(event.review && event.review.updatedAt);
+    const reviewOnSiteCount = event.review?.onSiteCount ?? null;
+    const reviewWalkInCount = event.review?.walkInCount ?? null;
+    const reviewTotalOnSite = (reviewOnSiteCount ?? 0) + (reviewWalkInCount ?? 0);
+    const eventEnded = event.time && new Date(event.time) < now;
+    const daysSinceEnd = eventEnded
+      ? Math.floor((now - new Date(event.time)) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    let attendanceVsReviewDiff = null;
+    if (hasReview && reviewOnSiteCount !== null && regular.length > 0) {
+      const checkedInCount = checkedIn.length;
+      attendanceVsReviewDiff = reviewOnSiteCount > 0
+        ? Math.round(((checkedInCount - reviewOnSiteCount) / reviewOnSiteCount) * 100)
+        : 0;
+    }
 
     return {
       eventId: event.id,
@@ -75,16 +84,18 @@ export function getEventStats(events, signups, series) {
       waitlistPromotionRate,
       checkinRate,
       rejectionRate,
-      isEnded,
       hasReview,
-      reviewNote: review.note || '',
-      onSiteCount,
-      walkInCount,
-      absenceReasons: review.absenceReasons || '',
-      followUpReaders: review.followUpReaders || '',
-      recommendedBooks: review.recommendedBooks || '',
-      reviewUpdatedAt: review.updatedAt || '',
-      attendanceDiff
+      reviewUpdatedAt: event.review?.updatedAt || null,
+      reviewOnSiteCount,
+      reviewWalkInCount,
+      reviewTotalOnSite,
+      reviewNote: event.review?.note || '',
+      reviewAbsenceReasons: event.review?.absenceReasons || '',
+      reviewFollowUpReaders: event.review?.followUpReaders || '',
+      reviewRecommendedBooks: event.review?.recommendedBooks || '',
+      eventEnded,
+      daysSinceEnd,
+      attendanceVsReviewDiff
     };
   });
 }
@@ -108,7 +119,13 @@ export function getAggregateStats(eventStatsList) {
       fullEvents: 0,
       lowCheckinEvents: 0,
       lowFullnessEvents: 0,
-      highRejectionEvents: 0
+      highRejectionEvents: 0,
+      totalReviewedEvents: 0,
+      totalUnreviewedEndedEvents: 0,
+      totalReviewOnSite: 0,
+      totalReviewWalkIn: 0,
+      reviewCompletionRate: 0,
+      largeAttendanceDiffEvents: 0
     };
   }
 
@@ -143,6 +160,18 @@ export function getAggregateStats(eventStatsList) {
   const lowFullnessEvents = eventStatsList.filter((e) => e.fullnessRate < 30).length;
   const highRejectionEvents = eventStatsList.filter((e) => e.totalSignups > 0 && e.rejectionRate >= 30).length;
 
+  const totalReviewedEvents = eventStatsList.filter((e) => e.hasReview).length;
+  const totalUnreviewedEndedEvents = eventStatsList.filter((e) => e.eventEnded && !e.hasReview && e.daysSinceEnd >= 1).length;
+  const totalReviewOnSite = eventStatsList.reduce((sum, e) => sum + (e.reviewOnSiteCount || 0), 0);
+  const totalReviewWalkIn = eventStatsList.reduce((sum, e) => sum + (e.reviewWalkInCount || 0), 0);
+  const endedEvents = eventStatsList.filter((e) => e.eventEnded && e.daysSinceEnd >= 1);
+  const reviewCompletionRate = endedEvents.length > 0
+    ? Math.round((totalReviewedEvents / endedEvents.length) * 100)
+    : 0;
+  const largeAttendanceDiffEvents = eventStatsList.filter((e) =>
+    e.attendanceVsReviewDiff !== null && Math.abs(e.attendanceVsReviewDiff) >= 30
+  ).length;
+
   return {
     totalEvents,
     totalSignups,
@@ -160,7 +189,13 @@ export function getAggregateStats(eventStatsList) {
     fullEvents,
     lowCheckinEvents,
     lowFullnessEvents,
-    highRejectionEvents
+    highRejectionEvents,
+    totalReviewedEvents,
+    totalUnreviewedEndedEvents,
+    totalReviewOnSite,
+    totalReviewWalkIn,
+    reviewCompletionRate,
+    largeAttendanceDiffEvents
   };
 }
 
@@ -312,42 +347,32 @@ export function getAnomalies(eventStatsList) {
       });
     }
 
-    if (stat.isEnded && !stat.hasReview && stat.regularCount > 0) {
+    if (stat.eventEnded && !stat.hasReview && stat.daysSinceEnd >= 1) {
       anomalies.push({
-        type: '未填复盘',
-        severity: 'low',
+        type: '待活动复盘',
+        severity: stat.daysSinceEnd >= 3 ? 'high' : stat.daysSinceEnd >= 2 ? 'medium' : 'low',
         eventId: stat.eventId,
         book: stat.book,
-        detail: '活动已结束，尚未填写复盘',
-        metric: 'hasReview',
-        value: 0,
+        detail: `活动结束${stat.daysSinceEnd}天未复盘`,
+        metric: 'daysSinceEnd',
+        value: stat.daysSinceEnd,
         navigateTarget: { type: 'review', eventId: stat.eventId }
       });
     }
 
-    if (stat.isEnded && stat.hasReview && stat.attendanceDiff !== null && stat.attendanceDiff > 3) {
+    if (stat.attendanceVsReviewDiff !== null && Math.abs(stat.attendanceVsReviewDiff) >= 30) {
+      const diffText = stat.attendanceVsReviewDiff > 0
+        ? `签到人数比复盘现场多${stat.attendanceVsReviewDiff}%`
+        : `签到人数比复盘现场少${Math.abs(stat.attendanceVsReviewDiff)}%`;
       anomalies.push({
-        type: '人数差异',
-        severity: stat.attendanceDiff >= 5 ? 'high' : 'medium',
+        type: '签到与复盘差异',
+        severity: Math.abs(stat.attendanceVsReviewDiff) >= 50 ? 'high' : 'medium',
         eventId: stat.eventId,
         book: stat.book,
-        detail: `现场${stat.onSiteCount}人 vs 签到${stat.checkedInCount}人，差${stat.attendanceDiff}人`,
-        metric: 'attendanceDiff',
-        value: stat.attendanceDiff,
-        navigateTarget: { type: 'review', eventId: stat.eventId }
-      });
-    }
-
-    if (stat.isEnded && stat.regularCount > 0 && stat.checkinRate < 80 && stat.hasReview && !stat.absenceReasons) {
-      anomalies.push({
-        type: '缺席未记录原因',
-        severity: 'medium',
-        eventId: stat.eventId,
-        book: stat.book,
-        detail: `签到率${stat.checkinRate}%，未记录缺席原因`,
-        metric: 'absenceReasons',
-        value: stat.checkinRate,
-        navigateTarget: { type: 'review', eventId: stat.eventId }
+        detail: diffText,
+        metric: 'attendanceVsReviewDiff',
+        value: stat.attendanceVsReviewDiff,
+        navigateTarget: { type: 'checkin', eventId: stat.eventId }
       });
     }
   });
