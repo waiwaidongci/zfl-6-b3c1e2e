@@ -24,7 +24,8 @@ export const OPERATION_TYPES = {
   CSV_IMPORT: 'CSV_IMPORT',
   UPDATE_READER_NOTE: 'UPDATE_READER_NOTE',
   BATCH_CREATE_EVENTS: 'BATCH_CREATE_EVENTS',
-  BATCH_UPDATE_SERIES: 'BATCH_UPDATE_SERIES'
+  BATCH_UPDATE_SERIES: 'BATCH_UPDATE_SERIES',
+  UPDATE_EVENT_REVIEW: 'UPDATE_EVENT_REVIEW'
 };
 
 export const OPERATION_LABELS = {
@@ -38,7 +39,8 @@ export const OPERATION_LABELS = {
   [OPERATION_TYPES.CSV_IMPORT]: 'CSV导入',
   [OPERATION_TYPES.UPDATE_READER_NOTE]: '修改读者备注',
   [OPERATION_TYPES.BATCH_CREATE_EVENTS]: '批量生成活动',
-  [OPERATION_TYPES.BATCH_UPDATE_SERIES]: '批量更新系列'
+  [OPERATION_TYPES.BATCH_UPDATE_SERIES]: '批量更新系列',
+  [OPERATION_TYPES.UPDATE_EVENT_REVIEW]: '活动复盘'
 };
 
 function safeParse(str, fallback) {
@@ -219,6 +221,9 @@ function restoreStateFromLog(log, currentState) {
     case OPERATION_TYPES.BATCH_UPDATE_SERIES:
       events = restoreEditedEvent(before, after, events);
       signups = restoreSignupsForEventChange(before, after, events, signups, OPERATION_TYPES.ADJUST_LIMIT);
+      break;
+    case OPERATION_TYPES.UPDATE_EVENT_REVIEW:
+      events = restoreEditedEvent(before, after, events);
       break;
     default:
       if (before.events) events = deepClone(before.events);
@@ -519,6 +524,8 @@ export function generateDescription(type, target, metadata) {
       return `批量生成：${target.seriesName || ''} 共${metadata?.eventCount || 0}期`;
     case OPERATION_TYPES.BATCH_UPDATE_SERIES:
       return `批量更新：${target.seriesName || ''} 更新${metadata?.updatedCount || 0}场${metadata?.limitChanged ? '（含名额调整）' : ''}`;
+    case OPERATION_TYPES.UPDATE_EVENT_REVIEW:
+      return `活动复盘：${target.eventName || metadata?.book || '未知活动'}`;
     default:
       return '未知操作';
   }

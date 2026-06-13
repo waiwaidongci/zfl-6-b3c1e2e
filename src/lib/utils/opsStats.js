@@ -9,6 +9,7 @@ import {
 } from './signupStatusMachine.js';
 
 export function getEventStats(events, signups, series) {
+  const now = new Date();
   return events.map((event) => {
     const eventSignups = signups.filter((s) => s.eventId === event.id);
     const approved = eventSignups.filter((s) => isApproved(s.status));
@@ -19,6 +20,10 @@ export function getEventStats(events, signups, series) {
     const checkedIn = approved.filter((s) => isCheckedIn(s.status));
     const promoted = approved.filter((s) => isPromoted(s.status));
     const limit = Number(event.limit);
+    const review = event.review || {};
+    const eventTime = new Date(event.time);
+    const isEnded = eventTime < now;
+    const hasReview = !!(review.note || review.onSiteCount !== null || review.walkInCount !== null || review.absenceReasons || review.followUpReaders || review.recommendedBooks);
 
     const signupConversionRate = eventSignups.length > 0
       ? Math.round((approved.length / eventSignups.length) * 100)
@@ -39,6 +44,10 @@ export function getEventStats(events, signups, series) {
     const rejectionRate = eventSignups.length > 0
       ? Math.round((rejected.length / eventSignups.length) * 100)
       : 0;
+
+    const onSiteCount = review.onSiteCount !== undefined && review.onSiteCount !== null ? Number(review.onSiteCount) : null;
+    const walkInCount = review.walkInCount !== undefined && review.walkInCount !== null ? Number(review.walkInCount) : null;
+    const attendanceDiff = onSiteCount !== null ? Math.abs(onSiteCount - checkedIn.length) : null;
 
     const s = series.find((sr) => sr.id === event.seriesId);
     const seriesName = s ? s.title : null;
@@ -65,7 +74,17 @@ export function getEventStats(events, signups, series) {
       fullnessRate,
       waitlistPromotionRate,
       checkinRate,
-      rejectionRate
+      rejectionRate,
+      isEnded,
+      hasReview,
+      reviewNote: review.note || '',
+      onSiteCount,
+      walkInCount,
+      absenceReasons: review.absenceReasons || '',
+      followUpReaders: review.followUpReaders || '',
+      recommendedBooks: review.recommendedBooks || '',
+      reviewUpdatedAt: review.updatedAt || '',
+      attendanceDiff
     };
   });
 }
@@ -290,6 +309,45 @@ export function getAnomalies(eventStatsList) {
         metric: 'rejectionRate',
         value: stat.rejectionRate,
         navigateTarget: { type: 'rejected', eventId: stat.eventId }
+      });
+    }
+
+    if (stat.isEnded && !stat.hasReview && stat.regularCount > 0) {
+      anomalies.push({
+        type: '未填复盘',
+        severity: 'low',
+        eventId: stat.eventId,
+        book: stat.book,
+        detail: '活动已结束，尚未填写复盘',
+        metric: 'hasReview',
+        value: 0,
+        navigateTarget: { type: 'review', eventId: stat.eventId }
+      });
+    }
+
+    if (stat.isEnded && stat.hasReview && stat.attendanceDiff !== null && stat.attendanceDiff > 3) {
+      anomalies.push({
+        type: '人数差异',
+        severity: stat.attendanceDiff >= 5 ? 'high' : 'medium',
+        eventId: stat.eventId,
+        book: stat.book,
+        detail: `现场${stat.onSiteCount}人 vs 签到${stat.checkedInCount}人，差${stat.attendanceDiff}人`,
+        metric: 'attendanceDiff',
+        value: stat.attendanceDiff,
+        navigateTarget: { type: 'review', eventId: stat.eventId }
+      });
+    }
+
+    if (stat.isEnded && stat.regularCount > 0 && stat.checkinRate < 80 && stat.hasReview && !stat.absenceReasons) {
+      anomalies.push({
+        type: '缺席未记录原因',
+        severity: 'medium',
+        eventId: stat.eventId,
+        book: stat.book,
+        detail: `签到率${stat.checkinRate}%，未记录缺席原因`,
+        metric: 'absenceReasons',
+        value: stat.checkinRate,
+        navigateTarget: { type: 'review', eventId: stat.eventId }
       });
     }
   });

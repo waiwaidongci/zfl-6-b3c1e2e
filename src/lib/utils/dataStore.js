@@ -64,10 +64,32 @@ export function reloadChangedData(changedKeys, currentData) {
 }
 
 export function normalizeEvent(event) {
-  if (event.reviewRequired === undefined) {
-    return { ...event, reviewRequired: false };
+  let updated = { ...event };
+  if (updated.reviewRequired === undefined) {
+    updated.reviewRequired = false;
   }
-  return event;
+  if (!updated.review || typeof updated.review !== 'object') {
+    updated.review = {
+      note: '',
+      onSiteCount: null,
+      walkInCount: null,
+      absenceReasons: '',
+      followUpReaders: '',
+      recommendedBooks: '',
+      updatedAt: ''
+    };
+  } else {
+    updated.review = {
+      note: updated.review.note || '',
+      onSiteCount: updated.review.onSiteCount !== undefined ? updated.review.onSiteCount : null,
+      walkInCount: updated.review.walkInCount !== undefined ? updated.review.walkInCount : null,
+      absenceReasons: updated.review.absenceReasons || '',
+      followUpReaders: updated.review.followUpReaders || '',
+      recommendedBooks: updated.review.recommendedBooks || '',
+      updatedAt: updated.review.updatedAt || ''
+    };
+  }
+  return updated;
 }
 
 export function normalizeSignup(signup) {

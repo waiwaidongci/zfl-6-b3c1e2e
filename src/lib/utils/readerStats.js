@@ -57,12 +57,24 @@ export function getReaderActivityHistory(readerId, signups, events) {
   return readerSignups
     .map((signup) => {
       const event = events.find((e) => e.id === signup.eventId);
+      const review = event?.review || null;
       return {
         signup,
         event,
         eventName: event?.book || '未知活动',
         eventHost: event?.host || '',
-        eventTime: event?.time || ''
+        eventTime: event?.time || '',
+        review: review && (review.note || review.onSiteCount !== null || review.walkInCount !== null || review.absenceReasons || review.followUpReaders || review.recommendedBooks)
+          ? {
+              note: review.note || '',
+              onSiteCount: review.onSiteCount !== undefined ? review.onSiteCount : null,
+              walkInCount: review.walkInCount !== undefined ? review.walkInCount : null,
+              absenceReasons: review.absenceReasons || '',
+              followUpReaders: review.followUpReaders || '',
+              recommendedBooks: review.recommendedBooks || '',
+              updatedAt: review.updatedAt || ''
+            }
+          : null
       };
     })
     .sort((a, b) => {

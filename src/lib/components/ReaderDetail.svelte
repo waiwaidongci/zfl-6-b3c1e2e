@@ -237,6 +237,23 @@
               {#if item.signup.rejectionReason}
                 <p class="rejectionReason">拒绝原因：{item.signup.rejectionReason}</p>
               {/if}
+              {#if item.review}
+                <div class="reviewMini">
+                  <span class="reviewMiniTitle">📝 活动复盘</span>
+                  {#if item.review.onSiteCount !== null && item.review.onSiteCount !== undefined}
+                    <span class="reviewMiniStat">现场 {item.review.onSiteCount} 人</span>
+                  {/if}
+                  {#if item.review.walkInCount !== null && item.review.walkInCount !== undefined}
+                    <span class="reviewMiniStat">临时 {item.review.walkInCount} 人</span>
+                  {/if}
+                  {#if item.review.note}
+                    <p class="reviewMiniNote">{item.review.note}</p>
+                  {/if}
+                  {#if item.review.recommendedBooks}
+                    <p class="reviewMiniBooks">📚 推荐：{item.review.recommendedBooks}</p>
+                  {/if}
+                </div>
+              {/if}
               <span class="signupTime">报名时间：{formatTime(item.signup.createdAt)}</span>
             </div>
             <span class="status-badge {getStatusBadge(item.signup).class}">
@@ -610,6 +627,48 @@
     border-radius: 6px;
     font-size: 13px;
     color: #721c24;
+  }
+
+  .reviewMini {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #f0f7ff;
+    border: 1px solid #bbdefb;
+    border-radius: 6px;
+  }
+
+  .reviewMiniTitle {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #1565c0;
+    margin-bottom: 6px;
+  }
+
+  .reviewMiniStat {
+    display: inline-block;
+    font-size: 12px;
+    color: #1565c0;
+    background: #e3f2fd;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-right: 6px;
+    margin-bottom: 4px;
+  }
+
+  .reviewMiniNote {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #37474f;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .reviewMiniBooks {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #2e7d32;
+    line-height: 1.5;
   }
 
   .signupTime {

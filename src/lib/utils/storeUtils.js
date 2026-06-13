@@ -53,10 +53,32 @@ export function writeBooks(books) {
 export function readEvents() {
   const stored = safeParse(localStorage.getItem(KEYS.events), []);
   return stored.map((item) => {
-    if (item.reviewRequired === undefined) {
-      return { ...item, reviewRequired: false };
+    let updated = { ...item };
+    if (updated.reviewRequired === undefined) {
+      updated.reviewRequired = false;
     }
-    return item;
+    if (!updated.review || typeof updated.review !== 'object') {
+      updated.review = {
+        note: '',
+        onSiteCount: null,
+        walkInCount: null,
+        absenceReasons: '',
+        followUpReaders: '',
+        recommendedBooks: '',
+        updatedAt: ''
+      };
+    } else {
+      updated.review = {
+        note: updated.review.note || '',
+        onSiteCount: updated.review.onSiteCount !== undefined ? updated.review.onSiteCount : null,
+        walkInCount: updated.review.walkInCount !== undefined ? updated.review.walkInCount : null,
+        absenceReasons: updated.review.absenceReasons || '',
+        followUpReaders: updated.review.followUpReaders || '',
+        recommendedBooks: updated.review.recommendedBooks || '',
+        updatedAt: updated.review.updatedAt || ''
+      };
+    }
+    return updated;
   });
 }
 

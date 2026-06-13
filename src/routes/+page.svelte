@@ -152,6 +152,16 @@
   let rejectingSignupId = '';
   let rejectionReason = '';
 
+  let editingReview = false;
+  let reviewForm = {
+    note: '',
+    onSiteCount: '',
+    walkInCount: '',
+    absenceReasons: '',
+    followUpReaders: '',
+    recommendedBooks: ''
+  };
+
   let importCsvText = '';
   let importPreview = null;
   let importErrors = [];
@@ -197,7 +207,8 @@
       checkin: '.signupSectionTitle:not(.pendingSectionTitle):not(.waitlistSectionTitle):not(.rejectedSectionTitle)',
       waitlist: '.waitlistSectionTitle',
       rejected: '.rejectedSectionTitle',
-      regular: '.signupSectionTitle:not(.pendingSectionTitle):not(.waitlistSectionTitle):not(.rejectedSectionTitle)'
+      regular: '.signupSectionTitle:not(.pendingSectionTitle):not(.waitlistSectionTitle):not(.rejectedSectionTitle)',
+      review: '.reviewSection'
     };
     const selector = selectors[targetType] || selectors.regular;
     requestAnimationFrame(() => {
@@ -350,7 +361,10 @@
   $: rejectedCount = selectedRejectedSignups.length;
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedRegularSignups.length) : 0;
   $: waitlistCount = selectedWaitlistSignups.length;
-  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...sortSignupsForCsv(selectedSignups).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${isCheckedInStatus(item.status) ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${isWaitlistStatus(item.status) ? item.waitlistPosition : '-'}"`)].join('\n');
+  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序,现场人数,临时到场,复盘备注,缺席原因,跟进读者,推荐书目', ...sortSignupsForCsv(selectedSignups).map((item) => {
+    const review = selectedEvent?.review || {};
+    return `"${selectedEvent?.book || ''}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${isCheckedInStatus(item.status) ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${isWaitlistStatus(item.status) ? item.waitlistPosition : '-'}","${review.onSiteCount !== null && review.onSiteCount !== undefined ? review.onSiteCount : '-'}","${review.walkInCount !== null && review.walkInCount !== undefined ? review.walkInCount : '-'}","${review.note || '-'}","${review.absenceReasons || '-'}","${review.followUpReaders || '-'}","${review.recommendedBooks || '-'}"`;
+  })].join('\n');
 
   $: seriesWithEvents = series.map((s) => {
     const sEvents = events.filter((e) => e.seriesId === s.id).sort((a, b) => a.time.localeCompare(b.time));
@@ -768,6 +782,69 @@
     editingEventSeriesIndex = undefined;
     clearBookSelection();
     eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+  }
+
+  function startEditReview() {
+    if (!selectedEvent) return;
+    const review = selectedEvent.review || {};
+    reviewForm = {
+      note: review.note || '',
+      onSiteCount: review.onSiteCount !== null && review.onSiteCount !== undefined ? String(review.onSiteCount) : '',
+      walkInCount: review.walkInCount !== null && review.walkInCount !== undefined ? String(review.walkInCount) : '',
+      absenceReasons: review.absenceReasons || '',
+      followUpReaders: review.followUpReaders || '',
+      recommendedBooks: review.recommendedBooks || ''
+    };
+    editingReview = true;
+  }
+
+  function cancelEditReview() {
+    editingReview = false;
+    reviewForm = {
+      note: '',
+      onSiteCount: '',
+      walkInCount: '',
+      absenceReasons: '',
+      followUpReaders: '',
+      recommendedBooks: ''
+    };
+  }
+
+  function saveReview() {
+    if (!selectedEvent) return;
+
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const beforeReview = selectedEvent.review ? { ...selectedEvent.review } : null;
+
+    const newReview = {
+      note: reviewForm.note.trim(),
+      onSiteCount: reviewForm.onSiteCount.trim() !== '' ? Number(reviewForm.onSiteCount) : null,
+      walkInCount: reviewForm.walkInCount.trim() !== '' ? Number(reviewForm.walkInCount) : null,
+      absenceReasons: reviewForm.absenceReasons.trim(),
+      followUpReaders: reviewForm.followUpReaders.trim(),
+      recommendedBooks: reviewForm.recommendedBooks.trim(),
+      updatedAt: new Date().toLocaleString()
+    };
+
+    events = events.map((e) =>
+      e.id === selectedEvent.id ? { ...e, review: newReview } : e
+    );
+
+    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+    const target = { eventId: selectedEvent.id, eventName: selectedEvent.book };
+    const description = generateDescription(OPERATION_TYPES.UPDATE_EVENT_REVIEW, target, { book: selectedEvent.book });
+    const res = recordOperation(
+      operationLogs,
+      OPERATION_TYPES.UPDATE_EVENT_REVIEW,
+      description,
+      target,
+      beforeSnapshot,
+      afterSnapshot,
+      { book: selectedEvent.book, beforeReview, afterReview: newReview }
+    );
+    operationLogs = res.logs;
+
+    editingReview = false;
   }
 
   function createBook() {
@@ -1946,6 +2023,101 @@
               {#if selectedSignups.length === 0}
                 <p class="empty">暂无报名</p>
               {/if}
+
+              {#if selectedEvent}
+                <div class="reviewSection">
+                  <div class="reviewHeader">
+                    <h3><Bookmark size={16} /> 活动复盘</h3>
+                    {#if !editingReview}
+                      <button class="ghost small" on:click={startEditReview}>
+                        <Edit3 size={14} /> 编辑复盘
+                      </button>
+                    {/if}
+                  </div>
+
+                  {#if editingReview}
+                    <div class="reviewForm">
+                      <div class="formRow">
+                        <div class="formField">
+                          <label>现场人数</label>
+                          <input type="number" bind:value={reviewForm.onSiteCount} placeholder="实际到场总人数" min="0" />
+                        </div>
+                        <div class="formField">
+                          <label>临时到场</label>
+                          <input type="number" bind:value={reviewForm.walkInCount} placeholder="未报名临时到场人数" min="0" />
+                        </div>
+                      </div>
+                      <div class="formField">
+                        <label>复盘备注</label>
+                        <textarea bind:value={reviewForm.note} placeholder="活动整体总结、讨论亮点、改进建议..."></textarea>
+                      </div>
+                      <div class="formField">
+                        <label>缺席原因</label>
+                        <textarea bind:value={reviewForm.absenceReasons} placeholder="缺席读者的原因统计或说明..."></textarea>
+                      </div>
+                      <div class="formField">
+                        <label>下次跟进读者</label>
+                        <textarea bind:value={reviewForm.followUpReaders} placeholder="需要重点跟进的读者名单及原因..."></textarea>
+                      </div>
+                      <div class="formField">
+                        <label>推荐书目</label>
+                        <textarea bind:value={reviewForm.recommendedBooks} placeholder="活动中提到的延伸阅读书籍..."></textarea>
+                      </div>
+                      <div class="formActions">
+                        <button on:click={saveReview}>保存复盘</button>
+                        <button type="button" class="ghost" on:click={cancelEditReview}>取消</button>
+                      </div>
+                    </div>
+                  {:else}
+                    {#if selectedEvent.review && (selectedEvent.review.note || selectedEvent.review.onSiteCount !== null || selectedEvent.review.walkInCount !== null || selectedEvent.review.absenceReasons || selectedEvent.review.followUpReaders || selectedEvent.review.recommendedBooks)}
+                      <div class="reviewContent">
+                        {#if selectedEvent.review.onSiteCount !== null && selectedEvent.review.onSiteCount !== undefined}
+                          <div class="reviewStat">
+                            <span class="reviewStatLabel">现场人数</span>
+                            <strong>{selectedEvent.review.onSiteCount} 人</strong>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.walkInCount !== null && selectedEvent.review.walkInCount !== undefined}
+                          <div class="reviewStat">
+                            <span class="reviewStatLabel">临时到场</span>
+                            <strong>{selectedEvent.review.walkInCount} 人</strong>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.note}
+                          <div class="reviewItem">
+                            <span class="reviewLabel">复盘备注</span>
+                            <p>{selectedEvent.review.note}</p>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.absenceReasons}
+                          <div class="reviewItem">
+                            <span class="reviewLabel">缺席原因</span>
+                            <p>{selectedEvent.review.absenceReasons}</p>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.followUpReaders}
+                          <div class="reviewItem">
+                            <span class="reviewLabel">下次跟进读者</span>
+                            <p>{selectedEvent.review.followUpReaders}</p>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.recommendedBooks}
+                          <div class="reviewItem">
+                            <span class="reviewLabel">推荐书目</span>
+                            <p>{selectedEvent.review.recommendedBooks}</p>
+                          </div>
+                        {/if}
+                        {#if selectedEvent.review.updatedAt}
+                          <span class="reviewTime">最后更新：{selectedEvent.review.updatedAt}</span>
+                        {/if}
+                      </div>
+                    {:else}
+                      <p class="empty empty-small">暂无复盘记录，点击"编辑复盘"开始记录</p>
+                    {/if}
+                  {/if}
+                </div>
+              {/if}
+
               <label class="csv"><Download size={16} />CSV文本<textarea readonly value={csv}></textarea></label>
             </section>
             {/if}
@@ -2579,6 +2751,148 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .adminGrid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
 .signupList { display: grid; gap: 10px; }
 .signupList article { border: 1px solid #e3dacb; border-radius: 8px; padding: 14px; background: #fffaf2; }
+
+.reviewSection {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e3dacb;
+}
+
+.reviewHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.reviewHeader h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #4b4435;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reviewContent {
+  background: #fff8ee;
+  border: 1px solid #e8ddc8;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.reviewStat {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  background: #fff;
+  border-radius: 6px;
+  margin-right: 10px;
+  margin-bottom: 10px;
+}
+
+.reviewStatLabel {
+  font-size: 12px;
+  color: #8a7f6a;
+}
+
+.reviewStat strong {
+  font-size: 18px;
+  color: #2a2822;
+}
+
+.reviewItem {
+  margin-top: 10px;
+}
+
+.reviewLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b6459;
+  margin-bottom: 4px;
+}
+
+.reviewItem p {
+  margin: 0;
+  padding: 8px 10px;
+  background: #fff;
+  border-radius: 6px;
+  color: #4a4439;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.reviewTime {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #999;
+  text-align: right;
+}
+
+.reviewForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reviewForm .formRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.reviewForm .formField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reviewForm label {
+  font-size: 13px;
+  color: #6b6459;
+  font-weight: 500;
+}
+
+.reviewForm input,
+.reviewForm textarea {
+  width: 100%;
+  border: 1px solid #d7ccba;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #2a2822;
+  font: inherit;
+  font-size: 13px;
+}
+
+.reviewForm textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.reviewForm .formActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.reviewForm .formActions button {
+  flex: 1;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.empty-small {
+  font-size: 13px;
+  padding: 12px;
+  text-align: center;
+}
+
 .csv { display: grid; gap: 8px; margin-top: 14px; color: #4a4439; }
 .csv textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .checkin-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
