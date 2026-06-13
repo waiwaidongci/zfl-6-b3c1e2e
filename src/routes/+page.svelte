@@ -838,11 +838,13 @@
 
     const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
     const beforeReview = selectedEvent.review ? { ...selectedEvent.review } : null;
+    const onSiteCountText = String(reviewForm.onSiteCount ?? '').trim();
+    const walkInCountText = String(reviewForm.walkInCount ?? '').trim();
 
     const newReview = {
       note: reviewForm.note.trim(),
-      onSiteCount: reviewForm.onSiteCount.trim() !== '' ? Number(reviewForm.onSiteCount) : null,
-      walkInCount: reviewForm.walkInCount.trim() !== '' ? Number(reviewForm.walkInCount) : null,
+      onSiteCount: onSiteCountText !== '' ? Number(onSiteCountText) : null,
+      walkInCount: walkInCountText !== '' ? Number(walkInCountText) : null,
       absenceReasons: reviewForm.absenceReasons.trim(),
       followUpReaders: reviewForm.followUpReaders.trim(),
       recommendedBooks: reviewForm.recommendedBooks.trim(),

@@ -48,7 +48,7 @@ export function getEventStats(events, signups, series) {
     const reviewOnSiteCount = event.review?.onSiteCount ?? null;
     const reviewWalkInCount = event.review?.walkInCount ?? null;
     const reviewTotalOnSite = (reviewOnSiteCount ?? 0) + (reviewWalkInCount ?? 0);
-    const eventEnded = event.time && new Date(event.time) < now;
+    const eventEnded = event.status === '已关闭' && event.time && new Date(event.time) < now;
     const daysSinceEnd = eventEnded
       ? Math.floor((now - new Date(event.time)) / (1000 * 60 * 60 * 24))
       : 0;
