@@ -50,6 +50,7 @@
     handleCalendarDayToggle
   } from '$lib/utils/eventActions.js';
   import { promoteFromWaitlist } from '$lib/utils/storeUtils.js';
+  import { batchCreateEvents, batchUpdateSeriesEvents, detectManuallyEditedFields } from '$lib/utils/seriesStore.js';
   import {
     OPERATION_TYPES,
     OPERATION_LABELS,
