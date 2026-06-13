@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick } from 'svelte';
-  import { Layers, UserCheck, Users, Calendar, CheckSquare, Square, XCircle, AlertCircle, Clock, ListPlus } from 'lucide-svelte';
+  import { Layers, UserCheck, Users, Calendar, CheckSquare, Square, XCircle, ListPlus } from 'lucide-svelte';
   import {
     readAllStore,
     writeSignups,
@@ -18,7 +18,7 @@
   } from '$lib/utils/storeUtils.js';
   import { buildPublicEventUrl } from '$lib/utils/eventLinkUtils.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, destroyChannel } from '$lib/utils/syncStore.js';
-  import { isPending, isRejected, isWaitlist, isRegular, isPromoted, isCheckedIn, getCancelActionLabel } from '$lib/utils/signupStatusMachine.js';
+  import { isPending, isRejected, isWaitlist, isRegular, isPromoted, isCheckedIn } from '$lib/utils/signupStatusMachine.js';
   import { readReaders, writeReaders, findReaderByPhone } from '$lib/utils/readerStore.js';
   import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
 
@@ -295,6 +295,21 @@
     mySignupIds = result.mySignupIds;
   }
 
+  function handleCheckboxKeydown(ev, evId, canSelect) {
+    if (!canSelect) return;
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      toggleEventSelection(evId);
+    }
+  }
+
+  function handleContentKeydown(ev, evId) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      navigateToEvent(evId);
+    }
+  }
+
   function getResultLabel(result) {
     if (!result.success) return { text: result.reason || '不可报名', class: 'rejected' };
     const s = result.signup;
@@ -551,8 +566,8 @@
         <div class="signupFormSection">
           <h3>整季报名 — 已选 {selectedEventIds.size} 场</h3>
           <form on:submit|preventDefault={handleBatchSignup}>
-            <input bind:value={signupForm.name} placeholder="姓名 *" required />
-            <input bind:value={signupForm.phone} placeholder="联系方式" />
+            <input bind:value={signupForm.name} placeholder="姓名 *" aria-label="姓名" required />
+            <input bind:value={signupForm.phone} placeholder="联系方式" aria-label="联系方式" />
             {#if matchedReaderInfo}
               <div class="readerMatchNotice">
                 <span>👤 已识别老读者：{matchedReaderInfo.name}</span>
@@ -561,7 +576,7 @@
                 {/if}
               </div>
             {/if}
-            <textarea bind:value={signupForm.answer} placeholder="报名备注（适用于所有选中场次）"></textarea>
+            <textarea bind:value={signupForm.answer} placeholder="报名备注（适用于所有选中场次）" aria-label="报名备注"></textarea>
 
             <div class="selectedEventsList">
               <h4>报名场次预览</h4>
@@ -624,7 +639,15 @@
 
                   <div class="seriesEventItem seriesEventItem-large" class:seriesEventItem-selected={isSelected} class:seriesEventItem-mine={hasMy}>
                     {#if canSelect}
-                      <div class="eventCheckbox" on:click|stopPropagation={() => toggleEventSelection(ev.id)}>
+                      <div
+                        class="eventCheckbox"
+                        role="checkbox"
+                        aria-checked={isSelected}
+                        tabindex="0"
+                        aria-label="选择第{idx + 1}期 {ev.book}"
+                        on:click|stopPropagation={() => toggleEventSelection(ev.id)}
+                        on:keydown|stopPropagation={(e) => handleCheckboxKeydown(e, ev.id, canSelect)}
+                      >
                         {#if isSelected}
                           <CheckSquare size={20} class="checkbox-checked" />
                         {:else}
@@ -632,16 +655,23 @@
                         {/if}
                       </div>
                     {:else if hasMy}
-                      <div class="eventCheckbox eventCheckbox-mine">
+                      <div class="eventCheckbox eventCheckbox-mine" role="img" aria-label="已报名第{idx + 1}期">
                         <CheckSquare size={20} />
                       </div>
                     {:else}
-                      <div class="eventCheckbox eventCheckbox-closed">
+                      <div class="eventCheckbox eventCheckbox-closed" role="img" aria-label="第{idx + 1}期已关闭，不可报名">
                         <XCircle size={20} />
                       </div>
                     {/if}
 
-                    <div class="seriesEventContent" on:click={() => navigateToEvent(ev.id)}>
+                    <div
+                      class="seriesEventContent"
+                      role="link"
+                      tabindex="0"
+                      aria-label="进入第{idx + 1}期 {ev.book} 详情页"
+                      on:click={() => navigateToEvent(ev.id)}
+                      on:keydown={(e) => handleContentKeydown(e, ev.id)}
+                    >
                       <div class="seriesEventHeader">
                         <span class="episodeBadge">第{idx + 1}期</span>
                         <span class="status-badge {statusBadge.class}">{statusBadge.text}</span>
