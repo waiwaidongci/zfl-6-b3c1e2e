@@ -169,26 +169,28 @@ export function resolveSignupStatusFromCsv({ signupType, reviewStatus, checkedIn
   const ci = typeof checkedIn === 'boolean' ? checkedIn : normalizeCheckinBool(checkedIn);
   const wl = typeof wasWaitlisted === 'boolean' ? wasWaitlisted : String(wasWaitlisted || '').trim() === 'true' || String(wasWaitlisted || '').trim() === '是';
 
+  const isPromotedType = type === '候补转正' || type === 'promoted' || type === '转正';
+  const explicitWasWaitlisted = wl || isPromotedType;
+
   if (review === '已拒绝' || type === '已拒绝' || type === 'rejected') {
-    return SIGNUP_STATUS.REJECTED;
+    return { status: SIGNUP_STATUS.REJECTED, wasWaitlisted: false };
   }
   if (review === '待审核' || type === '待审核' || type === 'pending') {
-    return SIGNUP_STATUS.PENDING;
+    return { status: SIGNUP_STATUS.PENDING, wasWaitlisted: false };
   }
   if (type === '已取消' || type === 'cancelled') {
-    return SIGNUP_STATUS.CANCELLED;
+    return { status: SIGNUP_STATUS.CANCELLED, wasWaitlisted: false };
   }
   if (ci) {
-    if (wl) return SIGNUP_STATUS.PROMOTED;
-    return SIGNUP_STATUS.CHECKED_IN;
+    return { status: SIGNUP_STATUS.CHECKED_IN, wasWaitlisted: explicitWasWaitlisted };
   }
   if (type === '候补' || type === 'waitlist' || type === '候') {
-    return SIGNUP_STATUS.WAITLISTED;
+    return { status: SIGNUP_STATUS.WAITLISTED, wasWaitlisted: false };
   }
-  if ((type === '候补转正' || wl) && (type === '正式' || !type || type === '候补转正')) {
-    return SIGNUP_STATUS.PROMOTED;
+  if (explicitWasWaitlisted && (type === '正式' || !type || isPromotedType)) {
+    return { status: SIGNUP_STATUS.PROMOTED, wasWaitlisted: true };
   }
-  return SIGNUP_STATUS.CONFIRMED;
+  return { status: SIGNUP_STATUS.CONFIRMED, wasWaitlisted: false };
 }
 
 function normalizeCheckinBool(val) {
@@ -204,12 +206,13 @@ export function resolveSignupStatusFromLegacy(signup) {
     return signup.status;
   }
 
-  return resolveSignupStatusFromCsv({
+  const result = resolveSignupStatusFromCsv({
     signupType: signup.status,
     reviewStatus: signup.reviewStatus,
     checkedIn: signup.checkedIn,
     wasWaitlisted: signup._wasWaitlisted
   });
+  return result.status;
 }
 
 export function migrateLegacySignup(signup) {
@@ -247,9 +250,11 @@ export function migrateLegacySignup(signup) {
       updated.checkedIn = expectedLegacy.checkedIn;
       needsUpdate = true;
     }
-    if (signup._wasWaitlisted !== undefined && Boolean(signup._wasWaitlisted) !== Boolean(expectedLegacy._wasWaitlisted)) {
-      updated._wasWaitlisted = expectedLegacy._wasWaitlisted;
-      needsUpdate = true;
+    if (signup._wasWaitlisted !== undefined) {
+      if (signup._wasWaitlisted === false && expectedLegacy._wasWaitlisted === true) {
+        updated._wasWaitlisted = true;
+        needsUpdate = true;
+      }
     }
     if (!updated.reviewStatus) {
       updated.reviewStatus = expectedLegacy.reviewStatus;
@@ -285,20 +290,23 @@ export function migrateLegacySignup(signup) {
   const legacyCheckedIn = signup.checkedIn;
   const legacyWasWaitlisted = signup._wasWaitlisted;
 
-  const resolvedStatus = resolveSignupStatusFromCsv({
+  const resolved = resolveSignupStatusFromCsv({
     signupType: legacyStatus,
     reviewStatus: legacyReviewStatus,
     checkedIn: legacyCheckedIn,
     wasWaitlisted: legacyWasWaitlisted
   });
+  const resolvedStatus = resolved.status;
 
   const derived = deriveLegacyFields(resolvedStatus);
+  const finalWasWaitlisted = resolved.wasWaitlisted || legacyWasWaitlisted || derived._wasWaitlisted;
   const migrated = {
     ...signup,
     status: resolvedStatus,
     reviewStatus: derived.reviewStatus,
     checkedIn: derived.checkedIn,
-    _wasWaitlisted: derived._wasWaitlisted
+    _wasWaitlisted: finalWasWaitlisted,
+    _migratedFromLegacy: true
   };
 
   if (resolvedStatus === SIGNUP_STATUS.WAITLISTED && !migrated.waitlistPosition) {
@@ -653,15 +661,25 @@ export function buildNewSignup(event, eventSignups, signupData) {
 }
 
 export function buildSignupFromCsvRow(eventId, parsedRow, existingWaitlistCount = 0) {
-  const status = resolveSignupStatusFromCsv({
+  const wasWaitlistedRaw = parsedRow.wasWaitlisted || parsedRow._wasWaitlisted;
+  const wasWaitlistedBool = typeof wasWaitlistedRaw === 'boolean'
+    ? wasWaitlistedRaw
+    : String(wasWaitlistedRaw || '').trim() === 'true' || String(wasWaitlistedRaw || '').trim() === '是';
+
+  const resolved = resolveSignupStatusFromCsv({
     signupType: parsedRow.signupType,
     reviewStatus: parsedRow.reviewStatus,
     checkedIn: parsedRow.checkedIn,
-    wasWaitlisted: parsedRow.wasWaitlisted || parsedRow._wasWaitlisted
+    wasWaitlisted: wasWaitlistedBool
   });
+  const status = resolved.status;
 
   const derived = deriveLegacyFields(status);
   const now = new Date().toLocaleString();
+
+  const finalWasWaitlisted = (status === SIGNUP_STATUS.CHECKED_IN)
+    ? (wasWaitlistedBool || resolved.wasWaitlisted || derived._wasWaitlisted)
+    : (resolved.wasWaitlisted || derived._wasWaitlisted);
 
   const signup = {
     id: parsedRow.id || crypto.randomUUID(),
@@ -678,7 +696,7 @@ export function buildSignupFromCsvRow(eventId, parsedRow, existingWaitlistCount 
     checkedInAt: parsedRow.checkedInAt || (derived.checkedIn ? now : ''),
     createdAt: parsedRow.createdAt || now,
     cancelledAt: status === SIGNUP_STATUS.CANCELLED ? (parsedRow.cancelledAt || now) : undefined,
-    _wasWaitlisted: derived._wasWaitlisted,
+    _wasWaitlisted: finalWasWaitlisted,
     _importedFromCsv: true
   };
 

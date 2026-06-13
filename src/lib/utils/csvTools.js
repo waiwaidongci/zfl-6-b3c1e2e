@@ -19,14 +19,15 @@ export const SYSTEM_FIELDS = [
   { key: 'name', label: '姓名', required: true, hint: '报名人姓名' },
   { key: 'phone', label: '手机', required: true, hint: '手机号，用于冲突检测和读者关联' },
   { key: 'answer', label: '回答', required: false, hint: '报名回答/备注' },
-  { key: 'signupType', label: '报名类型', required: false, hint: '正式/候补/待审核/已拒绝' },
+  { key: 'signupType', label: '报名类型', required: false, hint: '正式/候补/待审核/已拒绝/候补转正' },
   { key: 'reviewStatus', label: '审核状态', required: false, hint: '已通过/待审核/已拒绝' },
   { key: 'rejectionReason', label: '拒绝原因', required: false, hint: '审核拒绝原因' },
   { key: 'signupTime', label: '报名时间', required: false, hint: '报名提交时间' },
   { key: 'reviewTime', label: '审核时间', required: false, hint: '审核处理时间' },
   { key: 'checkinStatus', label: '签到状态', required: false, hint: '已到场/未到场' },
   { key: 'checkinTime', label: '签到时间', required: false, hint: '签到时间' },
-  { key: 'waitlistPosition', label: '候补顺序', required: false, hint: '候补名单序号' }
+  { key: 'waitlistPosition', label: '候补顺序', required: false, hint: '候补名单序号' },
+  { key: 'wasWaitlisted', label: '候补转正标记', required: false, hint: '是/否，标记是否由候补转正' }
 ];
 
 export const CONFLICT_STRATEGIES = [
@@ -175,6 +176,10 @@ export function autoDetectMapping(headers) {
     waitlistPosition: {
       exact: ['候补顺序', '候补号', '候补给号', '候补贴'],
       partial: ['候补顺序', '候补号']
+    },
+    wasWaitlisted: {
+      exact: ['候补转正标记', '候补转正', '是否候补转正', '由候补转正', 'wasWaitlisted'],
+      partial: ['候补转正标记', '候补转正']
     }
   };
 
@@ -224,6 +229,12 @@ function normalizeWaitlistPosition(val) {
   if (v === '-' || v === '无') return undefined;
   const n = Number(v);
   return isNaN(n) ? undefined : n;
+}
+
+function normalizeWasWaitlistedBool(val) {
+  if (!val) return false;
+  const v = String(val).trim();
+  return v === '是' || v === 'true' || v === '1' || v === '候补转正' || v === '已转正' || v === '转正';
 }
 
 export function previewImport({
@@ -295,6 +306,8 @@ export function previewImport({
     const hasCheckinStatusMapping = mapping.checkinStatus !== undefined && mapping.checkinStatus !== null && mapping.checkinStatus !== '';
     const rawCheckedIn = hasCheckinStatusMapping ? normalizeCheckinBool(getField(row, 'checkinStatus')) : !!checkedInAt;
     const rawWaitlistPosition = normalizeWaitlistPosition(getField(row, 'waitlistPosition'));
+    const hasWasWaitlistedMapping = mapping.wasWaitlisted !== undefined && mapping.wasWaitlisted !== null && mapping.wasWaitlisted !== '';
+    const rawWasWaitlisted = hasWasWaitlistedMapping ? normalizeWasWaitlistedBool(getField(row, 'wasWaitlisted')) : false;
 
     if (!bookName) {
       errors.push(`第${lineNum}行：活动名称为空`);
@@ -335,13 +348,15 @@ export function previewImport({
       }
     }
 
-    const resolvedStatus = resolveSignupStatusFromCsv({
+    const resolved = resolveSignupStatusFromCsv({
       signupType: rawSignupType,
       reviewStatus: rawReviewStatus,
       checkedIn: rawCheckedIn,
-      wasWaitlisted: false
+      wasWaitlisted: rawWasWaitlisted
     });
+    const resolvedStatus = resolved.status;
     const derived = deriveLegacyFields(resolvedStatus);
+    const finalWasWaitlisted = rawWasWaitlisted || resolved.wasWaitlisted || derived._wasWaitlisted;
 
     const parsedData = {
       name,
@@ -354,7 +369,7 @@ export function previewImport({
       reviewedAt,
       checkedIn: derived.checkedIn,
       checkedInAt,
-      _wasWaitlisted: derived._wasWaitlisted,
+      _wasWaitlisted: finalWasWaitlisted,
       createdAt: createdAt || new Date().toLocaleString()
     };
 

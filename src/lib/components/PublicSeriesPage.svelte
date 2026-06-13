@@ -13,6 +13,7 @@
   } from '$lib/utils/storeUtils.js';
   import { buildPublicEventUrl } from '$lib/utils/eventLinkUtils.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, destroyChannel } from '$lib/utils/syncStore.js';
+  import { isPending, isRejected, isWaitlist, isRegular, isPromoted, isCheckedIn } from '$lib/utils/signupStatusMachine.js';
 
   export let seriesId;
 
@@ -86,9 +87,13 @@
       (s) => s.eventId === eventId && mySignupIds.includes(s.id)
     );
     if (!my) return null;
-    if (my.reviewStatus === '待审核') return { text: '待审核', class: 'pending' };
-    if (my.reviewStatus === '已拒绝') return { text: '已拒绝', class: 'rejected' };
-    if (my.status === '候补') return { text: `候补 #${my.waitlistPosition}`, class: 'waitlist' };
+    if (isPending(my.status)) return { text: '待审核', class: 'pending' };
+    if (isRejected(my.status)) return { text: '已拒绝', class: 'rejected' };
+    if (isWaitlist(my.status)) return { text: `候补 #${my.waitlistPosition}`, class: 'waitlist' };
+    const isPromotedSignup = isPromoted(my.status) || my._wasWaitlisted;
+    if (isPromotedSignup && isCheckedIn(my.status)) return { text: '候补转正·已到场', class: 'promoted' };
+    if (isPromotedSignup) return { text: '候补转正', class: 'promoted' };
+    if (isCheckedIn(my.status)) return { text: '已报名·已到场', class: 'regular' };
     return { text: '已报名', class: 'regular' };
   }
 </script>
@@ -473,6 +478,7 @@
   .status-badge.waitlist { background: #fff3e0; color: #b36b00; }
   .status-badge.pending { background: #fff3cd; color: #856404; }
   .status-badge.rejected { background: #f8d7da; color: #721c24; }
+  .status-badge.promoted { background: #e3f2fd; color: #1565c0; }
   .status-badge.mine { background: #e3f2fd; color: #1565c0; }
 
   .seriesBanner {

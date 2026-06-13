@@ -18,7 +18,7 @@
   import { readReaders, writeReaders, findReaderByPhone } from '$lib/utils/readerStore.js';
   import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
-  import { isPending, isRejected, isWaitlist, isRegular, isCheckedIn, getCancelActionLabel } from '$lib/utils/signupStatusMachine.js';
+  import { isPending, isRejected, isWaitlist, isRegular, isCheckedIn, isPromoted, getCancelActionLabel } from '$lib/utils/signupStatusMachine.js';
 
   export let eventId;
 
@@ -258,6 +258,8 @@
             ✅ 报名已提交，等待管理员审核通过
           {:else if lastSignupStatus === '候补'}
             ✅ 已加入候补名单，顺序为第 {lastSignupWaitlistPosition} 位
+          {:else if lastSignupStatus === '候补转正'}
+            ✅ 恭喜！您已由候补转为正式报名
           {:else}
             ✅ 报名成功！
           {/if}
@@ -267,7 +269,7 @@
       {#if hasMySignup && myLatestSignup}
         <div class="mySignupSection">
           <h3>我的报名状态</h3>
-          <article class="mySignup-card" class:waitlist-card={isWaitlist(myLatestSignup.status)} class:pending-card={isPending(myLatestSignup.status)} class:rejected-card={isRejected(myLatestSignup.status)}>
+          <article class="mySignup-card" class:waitlist-card={isWaitlist(myLatestSignup.status)} class:pending-card={isPending(myLatestSignup.status)} class:rejected-card={isRejected(myLatestSignup.status)} class:promoted-card={isPromoted(myLatestSignup.status) || myLatestSignup._wasWaitlisted}>
             <strong>{event.book}</strong>
             <span>{event.host} · {formatTime(event.time)}</span>
             <span>报名时间：{myLatestSignup.createdAt}</span>
@@ -276,12 +278,16 @@
                 <span class="status-badge pending">待审核</span>
               {:else if isRejected(myLatestSignup.status)}
                 <span class="status-badge rejected">已拒绝</span>
-              {:else if isRegular(myLatestSignup.status) && !isCheckedIn(myLatestSignup.status)}
-                <span class="status-badge regular">正式报名</span>
               {:else if isWaitlist(myLatestSignup.status)}
                 <span class="status-badge waitlist">候补 #{myLatestSignup.waitlistPosition}</span>
               {/if}
-              {#if (isRegular(myLatestSignup.status)) && !isPending(myLatestSignup.status) && !isRejected(myLatestSignup.status)}
+              {#if isPromoted(myLatestSignup.status) || myLatestSignup._wasWaitlisted}
+                <span class="status-badge promoted">候补转正</span>
+              {/if}
+              {#if !isCheckedIn(myLatestSignup.status) && (isRegular(myLatestSignup.status) || isPromoted(myLatestSignup.status))}
+                <span class="status-badge regular">正式报名</span>
+              {/if}
+              {#if (isRegular(myLatestSignup.status) || isPromoted(myLatestSignup.status) || (myLatestSignup._wasWaitlisted && !isWaitlist(myLatestSignup.status))) && !isPending(myLatestSignup.status) && !isRejected(myLatestSignup.status)}
                 <span class="checkin-badge" class:checked={isCheckedIn(myLatestSignup.status)} class:unchecked={!isCheckedIn(myLatestSignup.status)}>
                   {isCheckedIn(myLatestSignup.status) ? '已到场' : '未到场'}
                 </span>
@@ -524,6 +530,7 @@
   .status-badge.waitlist { background: #fff3e0; color: #b36b00; }
   .status-badge.pending { background: #fff3cd; color: #856404; }
   .status-badge.rejected { background: #f8d7da; color: #721c24; }
+  .status-badge.promoted { background: #e3f2fd; color: #1565c0; }
 
   .seriesBanner {
     display: flex;
@@ -639,6 +646,7 @@
   .mySignup-card.waitlist-card { background: #fff8ee; border: 1px dashed #ffcc80 !important; }
   .mySignup-card.pending-card { background: #fffbf0; border: 1px dashed #ffe082 !important; }
   .mySignup-card.rejected-card { background: #fff5f5; border: 1px solid #f5c6cb !important; }
+  .mySignup-card.promoted-card { background: #f0f7ff; border: 1px dashed #90caf9 !important; }
   .mySignup-card .cancel-btn { margin-top: 12px; width: 100%; }
 
   .publicFooter {

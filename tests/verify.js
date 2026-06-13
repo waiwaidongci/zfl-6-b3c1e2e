@@ -89,6 +89,7 @@ import {
   promoteFromWaitlistWithStatus,
   handleLimitChange,
   buildNewSignup,
+  buildSignupFromCsvRow,
   getSignupStatusDisplay,
   getStatusCounts,
   normalizeSignup,
@@ -1364,13 +1365,26 @@ assertEqual(cancelledLegacy.reviewStatus, '', '已取消→reviewStatus为空');
 
 console.log('\n=== 状态机：resolveSignupStatusFromCsv ===\n');
 
-assertEqual(resolveSignupStatusFromCsv({ reviewStatus: '已拒绝' }), '已拒绝', 'CSV: 已拒绝→已拒绝');
-assertEqual(resolveSignupStatusFromCsv({ reviewStatus: '待审核' }), '待审核', 'CSV: 待审核→待审核');
-assertEqual(resolveSignupStatusFromCsv({ signupType: '候补' }), '候补', 'CSV: 候补→候补');
-assertEqual(resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true }), '已签到', 'CSV: 正式+签到→已签到');
-assertEqual(resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true, wasWaitlisted: true }), '候补转正', 'CSV: 正式+签到+wasWaitlisted→候补转正');
-assertEqual(resolveSignupStatusFromCsv({ signupType: '正式' }), '正式', 'CSV: 正式→正式');
-assertEqual(resolveSignupStatusFromCsv({ signupType: '候补转正' }), '候补转正', 'CSV: 候补转正→候补转正');
+assertEqual(resolveSignupStatusFromCsv({ reviewStatus: '已拒绝' }).status, '已拒绝', 'CSV: 已拒绝→已拒绝');
+assertEqual(resolveSignupStatusFromCsv({ reviewStatus: '待审核' }).status, '待审核', 'CSV: 待审核→待审核');
+assertEqual(resolveSignupStatusFromCsv({ signupType: '候补' }).status, '候补', 'CSV: 候补→候补');
+
+const csvFormalCheckedIn = resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true });
+assertEqual(csvFormalCheckedIn.status, '已签到', 'CSV: 正式+签到→已签到');
+assertEqual(csvFormalCheckedIn.wasWaitlisted, false, 'CSV: 正式+签到→wasWaitlisted=false');
+
+const csvPromotedCheckedIn = resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true, wasWaitlisted: true });
+assertEqual(csvPromotedCheckedIn.status, '已签到', 'CSV: 正式+签到+wasWaitlisted→已签到');
+assertEqual(csvPromotedCheckedIn.wasWaitlisted, true, 'CSV: 正式+签到+wasWaitlisted→wasWaitlisted=true');
+
+const csvPromotedTypeCheckedIn = resolveSignupStatusFromCsv({ signupType: '候补转正', checkedIn: true });
+assertEqual(csvPromotedTypeCheckedIn.status, '已签到', 'CSV: 候补转正+签到→已签到');
+assertEqual(csvPromotedTypeCheckedIn.wasWaitlisted, true, 'CSV: 候补转正+签到→wasWaitlisted=true(由类型推断)');
+
+assertEqual(resolveSignupStatusFromCsv({ signupType: '正式' }).status, '正式', 'CSV: 正式→正式');
+const csvPromotedOnly = resolveSignupStatusFromCsv({ signupType: '候补转正' });
+assertEqual(csvPromotedOnly.status, '候补转正', 'CSV: 候补转正→候补转正');
+assertEqual(csvPromotedOnly.wasWaitlisted, true, 'CSV: 候补转正→wasWaitlisted=true');
 
 console.log('\n=== 状态机：旧数据迁移 ===\n');
 
@@ -1583,13 +1597,42 @@ const garbageStatus = resolveSignupStatusFromLegacy({ status: '某某', reviewSt
 assertEqual(garbageStatus, '正式', '旧数据解析：无效status→正式');
 
 const csvNoFields = resolveSignupStatusFromCsv({});
-assertEqual(csvNoFields, '正式', 'CSV解析：空输入→正式');
+assertEqual(csvNoFields.status, '正式', 'CSV解析：空输入→正式');
 
 const csvCheckedInNoWaitlist = resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true, wasWaitlisted: false });
-assertEqual(csvCheckedInNoWaitlist, '已签到', 'CSV解析：正式+签到→已签到');
+assertEqual(csvCheckedInNoWaitlist.status, '已签到', 'CSV解析：正式+签到→已签到');
+assertEqual(csvCheckedInNoWaitlist.wasWaitlisted, false, 'CSV解析：正式+签到→无候补标记');
 
 const csvCheckedInWithWaitlist = resolveSignupStatusFromCsv({ signupType: '正式', checkedIn: true, wasWaitlisted: true });
-assertEqual(csvCheckedInWithWaitlist, '候补转正', 'CSV解析：正式+签到+候补→候补转正');
+assertEqual(csvCheckedInWithWaitlist.status, '已签到', 'CSV解析：正式+签到+候补→已签到');
+assertEqual(csvCheckedInWithWaitlist.wasWaitlisted, true, 'CSV解析：正式+签到+候补→保留候补标记');
+
+console.log('\n=== 状态机：buildSignupFromCsvRow _wasWaitlisted 保留 ===\n');
+
+const csvRowCheckedInNoWL = { name: '测试甲', phone: '13800001111', signupType: '正式', checkedIn: true, wasWaitlisted: false };
+const signupCiNoWL = buildSignupFromCsvRow('ev-test', csvRowCheckedInNoWL);
+assertEqual(signupCiNoWL.status, '已签到', 'buildSignup：正式+签到→已签到');
+assertEqual(signupCiNoWL._wasWaitlisted, false, 'buildSignup：正式+签到→_wasWaitlisted=false');
+
+const csvRowCheckedInWL = { name: '测试乙', phone: '13800002222', signupType: '正式', checkedIn: true, wasWaitlisted: true };
+const signupCiWL = buildSignupFromCsvRow('ev-test', csvRowCheckedInWL);
+assertEqual(signupCiWL.status, '已签到', 'buildSignup：正式+签到+候补→已签到');
+assertEqual(signupCiWL._wasWaitlisted, true, 'buildSignup：正式+签到+候补→_wasWaitlisted=true');
+
+const csvRowPromoted = { name: '测试丙', phone: '13800003333', signupType: '候补转正', checkedIn: false, wasWaitlisted: true };
+const signupPromoted = buildSignupFromCsvRow('ev-test', csvRowPromoted);
+assertEqual(signupPromoted.status, '候补转正', 'buildSignup：候补转正+未签到→候补转正');
+assertEqual(signupPromoted._wasWaitlisted, true, 'buildSignup：候补转正→_wasWaitlisted=true');
+
+const csvRowRegular = { name: '测试丁', phone: '13800004444', signupType: '正式', checkedIn: false, wasWaitlisted: false };
+const signupRegular = buildSignupFromCsvRow('ev-test', csvRowRegular);
+assertEqual(signupRegular.status, '正式', 'buildSignup：正式+未签到→正式');
+assertEqual(signupRegular._wasWaitlisted, false, 'buildSignup：正式→_wasWaitlisted=false');
+
+const csvRowWL = { name: '测试戊', phone: '13800005555', signupType: '候补', checkedIn: false, wasWaitlisted: false, waitlistPosition: 3 };
+const signupWL = buildSignupFromCsvRow('ev-test', csvRowWL, 2);
+assertEqual(signupWL.status, '候补', 'buildSignup：候补→候补');
+assertEqual(signupWL.waitlistPosition, 3, 'buildSignup：候补序号保持CSV值');
 
 const noTransitionSameStatus = createStatusTransition(baseSignup, '待审核');
 assertEqual(noTransitionSameStatus.status, '待审核', '转换：相同状态不报错');
