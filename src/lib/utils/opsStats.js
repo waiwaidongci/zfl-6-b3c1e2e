@@ -1,13 +1,23 @@
+import {
+  isApproved,
+  isPending,
+  isRejected,
+  isRegular,
+  isWaitlist,
+  isPromoted,
+  isCheckedIn
+} from './signupStatusMachine.js';
+
 export function getEventStats(events, signups, series) {
   return events.map((event) => {
     const eventSignups = signups.filter((s) => s.eventId === event.id);
-    const approved = eventSignups.filter((s) => s.reviewStatus === '已通过');
-    const regular = approved.filter((s) => s.status === '正式');
-    const waitlist = approved.filter((s) => s.status === '候补');
-    const pending = eventSignups.filter((s) => s.reviewStatus === '待审核');
-    const rejected = eventSignups.filter((s) => s.reviewStatus === '已拒绝');
-    const checkedIn = regular.filter((s) => s.checkedIn);
-    const promoted = regular.filter((s) => s._wasWaitlisted);
+    const approved = eventSignups.filter((s) => isApproved(s.status));
+    const regular = approved.filter((s) => isRegular(s.status));
+    const waitlist = approved.filter((s) => isWaitlist(s.status));
+    const pending = eventSignups.filter((s) => isPending(s.status));
+    const rejected = eventSignups.filter((s) => isRejected(s.status));
+    const checkedIn = approved.filter((s) => isCheckedIn(s.status));
+    const promoted = approved.filter((s) => isPromoted(s.status));
     const limit = Number(event.limit);
 
     const signupConversionRate = eventSignups.length > 0
@@ -295,13 +305,13 @@ export function getSignupGroupsSummary(eventStatsList, signups) {
   const filteredSignups = signups.filter((s) => filteredEventIds.has(s.eventId));
   const groups = {
     total: filteredSignups.length,
-    pending: filteredSignups.filter((s) => s.reviewStatus === '待审核').length,
-    approved: filteredSignups.filter((s) => s.reviewStatus === '已通过').length,
-    rejected: filteredSignups.filter((s) => s.reviewStatus === '已拒绝').length,
-    regular: filteredSignups.filter((s) => s.reviewStatus === '已通过' && s.status === '正式').length,
-    waitlist: filteredSignups.filter((s) => s.reviewStatus === '已通过' && s.status === '候补').length,
-    checkedIn: filteredSignups.filter((s) => s.checkedIn).length,
-    promoted: filteredSignups.filter((s) => s._wasWaitlisted).length
+    pending: filteredSignups.filter((s) => isPending(s.status)).length,
+    approved: filteredSignups.filter((s) => isApproved(s.status)).length,
+    rejected: filteredSignups.filter((s) => isRejected(s.status)).length,
+    regular: filteredSignups.filter((s) => isRegular(s.status)).length,
+    waitlist: filteredSignups.filter((s) => isWaitlist(s.status)).length,
+    checkedIn: filteredSignups.filter((s) => isCheckedIn(s.status)).length,
+    promoted: filteredSignups.filter((s) => isPromoted(s.status)).length
   };
   return groups;
 }

@@ -1,4 +1,13 @@
 import { normalizeTags } from './readerStore.js';
+import {
+  isCheckedIn,
+  isApproved,
+  isPending,
+  isRejected,
+  isRegular,
+  isWaitlist,
+  isPromoted
+} from './signupStatusMachine.js';
 
 export function getReaderSignups(readerId, signups) {
   return signups.filter((s) => s.readerId === readerId);
@@ -66,7 +75,7 @@ export function getReaderActivityHistory(readerId, signups, events) {
 export function countCheckedIn(readerId, signups) {
   const readerSignups = getReaderSignups(readerId, signups);
   return readerSignups.filter(
-    (s) => s.checkedIn && s.reviewStatus === '已通过' && s.status === '正式'
+    (s) => isCheckedIn(s.status)
   ).length;
 }
 
@@ -75,8 +84,8 @@ export function countMissed(readerId, signups, events) {
   const now = new Date();
 
   return readerSignups.filter((s) => {
-    if (s.reviewStatus !== '已通过' || s.status !== '正式') return false;
-    if (s.checkedIn) return false;
+    if (!isRegular(s.status) && !isPromoted(s.status)) return false;
+    if (isCheckedIn(s.status)) return false;
 
     const event = events.find((e) => e.id === s.eventId);
     if (!event || !event.time) return false;
@@ -89,13 +98,13 @@ export function countMissed(readerId, signups, events) {
 export function countWaitlistPromoted(readerId, signups) {
   const readerSignups = getReaderSignups(readerId, signups);
   return readerSignups.filter(
-    (s) => s.reviewStatus === '已通过' && s.status === '正式' && s._wasWaitlisted
+    (s) => isPromoted(s.status)
   ).length;
 }
 
 export function countTotalEvents(readerId, signups) {
   const readerSignups = getReaderSignups(readerId, signups);
-  return readerSignups.filter((s) => s.reviewStatus === '已通过' && s.status === '正式').length;
+  return readerSignups.filter((s) => isRegular(s.status) || isPromoted(s.status) || isCheckedIn(s.status)).length;
 }
 
 export function getLatestAnswer(readerId, signups) {
@@ -109,7 +118,7 @@ export function getLatestAnswer(readerId, signups) {
 export function getWaitlistPromotions(readerId, signups, events) {
   const readerSignups = getReaderSignups(readerId, signups);
   return readerSignups
-    .filter((s) => s.reviewStatus === '已通过' && s.status === '正式' && s._wasWaitlisted)
+    .filter((s) => isPromoted(s.status))
     .map((s) => {
       const event = events.find((e) => e.id === s.eventId);
       return {
@@ -132,10 +141,10 @@ export function getReaderStats(readerId, signups, events) {
   const promotions = getWaitlistPromotions(readerId, signups, events);
 
   const signupsWithReader = getReaderSignups(readerId, signups);
-  const pending = signupsWithReader.filter((s) => s.reviewStatus === '待审核').length;
-  const rejected = signupsWithReader.filter((s) => s.reviewStatus === '已拒绝').length;
+  const pending = signupsWithReader.filter((s) => isPending(s.status)).length;
+  const rejected = signupsWithReader.filter((s) => isRejected(s.status)).length;
   const waitlisted = signupsWithReader.filter(
-    (s) => s.reviewStatus === '已通过' && s.status === '候补'
+    (s) => isWaitlist(s.status)
   ).length;
 
   const attendanceRate = totalEvents > 0 ? Math.round((checkedIn / totalEvents) * 100) : 0;

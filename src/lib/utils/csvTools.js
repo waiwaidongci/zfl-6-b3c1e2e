@@ -1,4 +1,18 @@
 import { linkSignupToReader } from './readerMigration.js';
+import {
+  resolveSignupStatusFromCsv,
+  deriveLegacyFields,
+  SIGNUP_STATUS,
+  isCheckedIn,
+  isWaitlist,
+  isPending
+} from './signupStatusMachine.js';
+
+function normalizeCheckinBool(val) {
+  if (!val) return false;
+  const v = String(val).trim();
+  return v === '已到场' || v === '已签到' || v === '是' || v === 'true' || v === '1' || v === '已';
+}
 
 export const SYSTEM_FIELDS = [
   { key: 'activity', label: '活动', required: true, hint: '活动/书名名称，用于匹配或创建活动' },
@@ -190,35 +204,6 @@ export function autoDetectMapping(headers) {
   return mapping;
 }
 
-function normalizeCheckinStatus(val) {
-  if (!val) return false;
-  const v = String(val).trim();
-  return v === '已到场' || v === '已签到' || v === '是' || v === 'true' || v === '1' || v === '已';
-}
-
-function normalizeSignupType(val, reviewStatus) {
-  if (!val) return '正式';
-  const v = String(val).trim();
-  if (v === '正式' || v === '正' || v === 'regular') return '正式';
-  if (v === '候补' || v === '候' || v === 'waitlist') return '候补';
-  if (v === '待审核' || v === 'pending') return '待审核';
-  if (v === '已拒绝' || v === 'rejected') return '已拒绝';
-  if (reviewStatus === '待审核') return '待审核';
-  if (reviewStatus === '已拒绝') return '已拒绝';
-  return v;
-}
-
-function normalizeReviewStatus(val, signupType) {
-  if (!val) return '已通过';
-  const v = String(val).trim();
-  if (v === '已通过' || v === '通过' || v === 'approved') return '已通过';
-  if (v === '待审核' || v === '待审' || v === 'pending') return '待审核';
-  if (v === '已拒绝' || v === '拒绝' || v === 'rejected') return '已拒绝';
-  if (signupType === '待审核') return '待审核';
-  if (signupType === '已拒绝') return '已拒绝';
-  return v;
-}
-
 function normalizeRejectionReason(val) {
   if (!val) return '';
   const v = String(val).trim();
@@ -308,8 +293,8 @@ export function previewImport({
     const reviewedAt = normalizeTime(getField(row, 'reviewTime'));
     const checkedInAt = normalizeTime(getField(row, 'checkinTime'));
     const hasCheckinStatusMapping = mapping.checkinStatus !== undefined && mapping.checkinStatus !== null && mapping.checkinStatus !== '';
-    const checkedIn = hasCheckinStatusMapping ? normalizeCheckinStatus(getField(row, 'checkinStatus')) : !!checkedInAt;
-    const waitlistPosition = normalizeWaitlistPosition(getField(row, 'waitlistPosition'));
+    const rawCheckedIn = hasCheckinStatusMapping ? normalizeCheckinBool(getField(row, 'checkinStatus')) : !!checkedInAt;
+    const rawWaitlistPosition = normalizeWaitlistPosition(getField(row, 'waitlistPosition'));
 
     if (!bookName) {
       errors.push(`第${lineNum}行：活动名称为空`);
@@ -350,30 +335,26 @@ export function previewImport({
       }
     }
 
-    const reviewStatus = normalizeReviewStatus(rawReviewStatus, rawSignupType);
-    let effectiveStatus = normalizeSignupType(rawSignupType, reviewStatus);
-    let effectiveWaitlistPosition = waitlistPosition;
-    if (reviewStatus === '已拒绝') {
-      effectiveStatus = '已拒绝';
-      effectiveWaitlistPosition = undefined;
-    } else if (reviewStatus === '待审核') {
-      effectiveStatus = '待审核';
-      effectiveWaitlistPosition = undefined;
-    } else if (effectiveStatus === '候补' && !effectiveWaitlistPosition) {
-      effectiveWaitlistPosition = 1;
-    }
+    const resolvedStatus = resolveSignupStatusFromCsv({
+      signupType: rawSignupType,
+      reviewStatus: rawReviewStatus,
+      checkedIn: rawCheckedIn,
+      wasWaitlisted: false
+    });
+    const derived = deriveLegacyFields(resolvedStatus);
 
     const parsedData = {
       name,
       phone,
       answer,
-      status: effectiveStatus,
-      waitlistPosition: effectiveWaitlistPosition,
-      reviewStatus,
-      rejectionReason,
+      status: resolvedStatus,
+      waitlistPosition: isWaitlist(resolvedStatus) ? (rawWaitlistPosition || 1) : undefined,
+      reviewStatus: derived.reviewStatus,
+      rejectionReason: resolvedStatus === SIGNUP_STATUS.REJECTED ? (rejectionReason || '未提供原因') : '',
       reviewedAt,
-      checkedIn,
+      checkedIn: derived.checkedIn,
       checkedInAt,
+      _wasWaitlisted: derived._wasWaitlisted,
       createdAt: createdAt || new Date().toLocaleString()
     };
 
@@ -433,10 +414,11 @@ export function previewImport({
         willChange = true;
       } else if (conflictStrategy === 'checkinOnly') {
         updateFields = {
-          checkedIn: parsedData.checkedIn,
+          status: derived.checkedIn ? SIGNUP_STATUS.CHECKED_IN : existingSignup.status,
+          checkedIn: derived.checkedIn,
           checkedInAt: parsedData.checkedInAt
         };
-        if (existingSignup.checkedIn !== parsedData.checkedIn ||
+        if (isCheckedIn(existingSignup.status) !== derived.checkedIn ||
             existingSignup.checkedInAt !== parsedData.checkedInAt) {
           willChange = true;
         }

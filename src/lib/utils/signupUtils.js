@@ -1,3 +1,15 @@
+import {
+  isApproved,
+  isPending,
+  isRejected,
+  isRegular,
+  isWaitlist,
+  isPromoted,
+  isCheckedIn,
+  SIGNUP_STATUS,
+  sortSignupsByStatusPriority
+} from './signupStatusMachine.js';
+
 export function getSignupsByEvent(signups, eventId) {
   return signups.filter((item) => item.eventId === eventId);
 }
@@ -15,31 +27,31 @@ export function sortByWaitlistPosition(signups) {
 }
 
 export function getApprovedSignups(signups) {
-  return signups.filter((item) => item.reviewStatus === '已通过');
+  return signups.filter((item) => isApproved(item.status));
 }
 
 export function getPendingSignups(signups) {
-  return sortByCreatedAtAsc(signups.filter((item) => item.reviewStatus === '待审核'));
+  return sortByCreatedAtAsc(signups.filter((item) => isPending(item.status)));
 }
 
 export function getRejectedSignups(signups) {
-  return sortByReviewedAtDesc(signups.filter((item) => item.reviewStatus === '已拒绝'));
+  return sortByReviewedAtDesc(signups.filter((item) => isRejected(item.status)));
 }
 
 export function getRegularSignups(signups) {
-  return getApprovedSignups(signups).filter((item) => item.status === '正式');
+  return getApprovedSignups(signups).filter((item) => isRegular(item.status) || isPromoted(item.status) || isCheckedIn(item.status));
 }
 
 export function getWaitlistSignups(signups) {
-  return sortByWaitlistPosition(getApprovedSignups(signups).filter((item) => item.status === '候补'));
+  return sortByWaitlistPosition(getApprovedSignups(signups).filter((item) => isWaitlist(item.status)));
 }
 
 export function getCheckedInCount(signups) {
-  return signups.filter((item) => item.checkedIn).length;
+  return signups.filter((item) => isCheckedIn(item.status)).length;
 }
 
 export function getRegularCheckedInCount(signups) {
-  return getRegularSignups(signups).filter((item) => item.checkedIn).length;
+  return getRegularSignups(signups).filter((item) => isCheckedIn(item.status)).length;
 }
 
 export function getGroupedSignups(signups) {
@@ -52,17 +64,5 @@ export function getGroupedSignups(signups) {
 }
 
 export function sortSignupsForCsv(signups) {
-  return [...signups].sort((a, b) => {
-    const statusOrder = { '待审核': 0, '已通过': 1, '已拒绝': 2 };
-    if (statusOrder[a.reviewStatus] !== statusOrder[b.reviewStatus]) {
-      return statusOrder[a.reviewStatus] - statusOrder[b.reviewStatus];
-    }
-    if (a.status !== b.status) {
-      return a.status === '正式' ? -1 : 1;
-    }
-    if (a.status === '候补') {
-      return a.waitlistPosition - b.waitlistPosition;
-    }
-    return a.createdAt.localeCompare(b.createdAt);
-  });
+  return sortSignupsByStatusPriority(signups);
 }

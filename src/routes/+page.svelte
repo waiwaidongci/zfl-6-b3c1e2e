@@ -52,6 +52,16 @@
   import { promoteFromWaitlist } from '$lib/utils/storeUtils.js';
   import { batchCreateEvents, batchUpdateSeriesEvents, detectManuallyEditedFields } from '$lib/utils/seriesStore.js';
   import {
+    isPending as isPendingStatus,
+    isRejected as isRejectedStatus,
+    isWaitlist as isWaitlistStatus,
+    isRegular as isRegularStatus,
+    isCheckedIn as isCheckedInStatus,
+    isPromoted as isPromotedStatus,
+    isApproved as isApprovedStatus,
+    getCancelActionLabel
+  } from '$lib/utils/signupStatusMachine.js';
+  import {
     OPERATION_TYPES,
     OPERATION_LABELS,
     readOperationLogs,
@@ -340,7 +350,7 @@
   $: rejectedCount = selectedRejectedSignups.length;
   $: seatsLeft = selectedEvent ? Math.max(0, Number(selectedEvent.limit) - selectedRegularSignups.length) : 0;
   $: waitlistCount = selectedWaitlistSignups.length;
-  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...sortSignupsForCsv(selectedSignups).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${item.checkedIn ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${item.status === '候补' ? item.waitlistPosition : '-'}"`)].join('\n');
+  $: csv = ['活动,姓名,手机,回答,报名类型,审核状态,拒绝原因,报名时间,审核时间,签到状态,签到时间,候补顺序', ...sortSignupsForCsv(selectedSignups).map((item) => `"${selectedEvent.book}","${item.name}","${item.phone}","${item.answer}","${item.status}","${item.reviewStatus}","${item.rejectionReason || '-'}","${item.createdAt}","${item.reviewedAt || '-'}","${isCheckedInStatus(item.status) ? '已到场' : '未到场'}","${item.checkedInAt || '-'}","${isWaitlistStatus(item.status) ? item.waitlistPosition : '-'}"`)].join('\n');
 
   $: seriesWithEvents = series.map((s) => {
     const sEvents = events.filter((e) => e.seriesId === s.id).sort((a, b) => a.time.localeCompare(b.time));
@@ -854,7 +864,7 @@
     const signup = signups.find((item) => item.id === id);
     const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
     const event = events.find((e) => e.id === signup?.eventId);
-    const willCheckIn = signup && !signup.checkedIn;
+    const willCheckIn = signup && !isCheckedInStatus(signup.status);
 
     signups = toggleCheckInAction(signups, id);
 
@@ -1447,34 +1457,34 @@
               <h3>我的报名</h3>
               {#each mySignups as item}
                 {@const event = events.find((e) => e.id === item.eventId)}
-                <article class="mySignup-card" class:waitlist-card={item.status === '候补'} class:pending-card={item.reviewStatus === '待审核'} class:rejected-card={item.reviewStatus === '已拒绝'}>
+                <article class="mySignup-card" class:waitlist-card={isWaitlistStatus(item.status)} class:pending-card={isPendingStatus(item.status)} class:rejected-card={isRejectedStatus(item.status)}>
                   <strong>{event?.book || '未知活动'}</strong>
                   <span>{event?.host} · {event?.time?.replace('T', ' ')}</span>
                   <span>报名时间：{item.createdAt}</span>
                   <div class="mySignup-status">
-                    {#if item.reviewStatus === '待审核'}
+                    {#if isPendingStatus(item.status)}
                       <span class="status-badge pending">待审核</span>
-                    {:else if item.reviewStatus === '已拒绝'}
+                    {:else if isRejectedStatus(item.status)}
                       <span class="status-badge rejected">已拒绝</span>
-                    {:else if item.status === '正式'}
-                      <span class="status-badge regular">正式报名</span>
-                    {:else if item.status === '候补'}
+                    {:else if isRegularStatus(item.status) || isCheckedInStatus(item.status) || isPromotedStatus(item.status)}
+                      <span class="status-badge regular">{isPromotedStatus(item.status) ? '候补转正' : '正式报名'}</span>
+                    {:else if isWaitlistStatus(item.status)}
                       <span class="status-badge waitlist">候补 #{item.waitlistPosition}</span>
                     {/if}
-                    {#if item.reviewStatus === '已通过' && item.status === '正式'}
-                      <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
-                        {item.checkedIn ? '已到场' : '未到场'}
+                    {#if (isRegularStatus(item.status) || isPromotedStatus(item.status))}
+                      <span class="checkin-badge" class:checked={isCheckedInStatus(item.status)} class:unchecked={!isCheckedInStatus(item.status)}>
+                        {isCheckedInStatus(item.status) ? '已到场' : '未到场'}
                       </span>
                     {/if}
-                    {#if item.checkedIn && item.checkedInAt}
+                    {#if isCheckedInStatus(item.status) && item.checkedInAt}
                       <span class="checkin-time">签到时间：{item.checkedInAt}</span>
                     {/if}
-                    {#if item.reviewStatus === '已拒绝' && item.rejectionReason}
+                    {#if isRejectedStatus(item.status) && item.rejectionReason}
                       <span class="rejection-reason-display">拒绝原因：{item.rejectionReason}</span>
                     {/if}
                   </div>
                   <button class="ghost cancel-btn" on:click={() => cancelSignup(item.id)}>
-                    {item.reviewStatus === '待审核' ? '取消申请' : (item.reviewStatus === '已拒绝' ? '删除记录' : (item.status === '正式' ? '取消报名' : '退出候补'))}
+                    {getCancelActionLabel(item)}
                   </button>
                 </article>
               {/each}
@@ -1868,20 +1878,20 @@
                           <strong>{item.name}</strong>
                           <span>{item.phone} · {item.createdAt}</span>
                           <p>{item.answer}</p>
-                          {#if item.checkedIn && item.checkedInAt}
+                          {#if isCheckedInStatus(item.status) && item.checkedInAt}
                             <span class="checkin-time">签到时间：{item.checkedInAt}</span>
                           {/if}
                         </div>
                         <div class="badgeGroup">
-                          <span class="status-badge regular">正式</span>
-                          <span class="checkin-badge" class:checked={item.checkedIn} class:unchecked={!item.checkedIn}>
-                            {item.checkedIn ? '已到场' : '未到场'}
+                          <span class="status-badge regular">{isPromotedStatus(item.status) ? '候补转正' : '正式'}</span>
+                          <span class="checkin-badge" class:checked={isCheckedInStatus(item.status)} class:unchecked={!isCheckedInStatus(item.status)}>
+                            {isCheckedInStatus(item.status) ? '已到场' : '未到场'}
                           </span>
                         </div>
                       </div>
                       <div class="signupActions">
-                        <button class="ghost checkin-btn" class:checkin-active={item.checkedIn} on:click={() => toggleCheckIn(item.id)}>
-                          {item.checkedIn ? '标记未到场' : '标记已到场'}
+                        <button class="ghost checkin-btn" class:checkin-active={isCheckedInStatus(item.status)} on:click={() => toggleCheckIn(item.id)}>
+                          {isCheckedInStatus(item.status) ? '标记未到场' : '标记已到场'}
                         </button>
                         <button class="ghost" on:click={() => cancelSignup(item.id)}>取消报名</button>
                       </div>
@@ -2220,9 +2230,9 @@
                             <td>{sg._eventBook}</td>
                             <td>{sg.name}</td>
                             <td>{sg.phone}</td>
-                            <td><span class="status-badge {sg.status === '正式' ? 'regular' : sg.status === '候补' ? 'waitlist' : sg.status === '待审核' ? 'pending' : 'rejected'}">{sg.status}</span></td>
-                            <td><span class="status-badge {sg.reviewStatus === '已通过' ? 'regular' : sg.reviewStatus === '待审核' ? 'pending' : 'rejected'}">{sg.reviewStatus}</span></td>
-                            <td><span class="checkin-badge {sg.checkedIn ? 'checked' : 'unchecked'}">{sg.checkedIn ? '已到场' : '未到场'}</span></td>
+                            <td><span class="status-badge {isRegularStatus(sg.status) || isPromotedStatus(sg.status) || isCheckedInStatus(sg.status) ? 'regular' : isWaitlistStatus(sg.status) ? 'waitlist' : isPendingStatus(sg.status) ? 'pending' : 'rejected'}">{sg.status}</span></td>
+                            <td><span class="status-badge {isApprovedStatus(sg.status) ? 'regular' : isPendingStatus(sg.status) ? 'pending' : 'rejected'}">{sg.reviewStatus}</span></td>
+                            <td><span class="checkin-badge {isCheckedInStatus(sg.status) ? 'checked' : 'unchecked'}">{isCheckedInStatus(sg.status) ? '已到场' : '未到场'}</span></td>
                           </tr>
                         {/each}
                       </tbody>
@@ -2259,8 +2269,8 @@
                             </td>
                             <td class="changeDetailCell">
                               {#if up.strategy === 'checkinOnly'}
-                                {#if up.updates.checkedIn !== up.original.checkedIn}
-                                  <span class="changeItem">签到：{up.original.checkedIn ? '已到场→未到场' : '未到场→已到场'}</span>
+                                {#if isCheckedInStatus(up.updates.status || up.original.status) !== isCheckedInStatus(up.original.status)}
+                                  <span class="changeItem">签到：{isCheckedInStatus(up.original.status) ? '已到场→未到场' : '未到场→已到场'}</span>
                                 {/if}
                                 {#if up.updates.checkedInAt !== up.original.checkedInAt}
                                   <span class="changeItem">签到时间：{up.original.checkedInAt || '-'} → {up.updates.checkedInAt || '-'}</span>
@@ -2275,8 +2285,8 @@
                                 {#if up.updates.reviewStatus !== up.original.reviewStatus}
                                   <span class="changeItem">审核：{up.original.reviewStatus} → {up.updates.reviewStatus}</span>
                                 {/if}
-                                {#if up.updates.checkedIn !== up.original.checkedIn}
-                                  <span class="changeItem">签到：{up.original.checkedIn ? '已→未' : '未→已'}</span>
+                                {#if isCheckedInStatus(up.updates.status || up.original.status) !== isCheckedInStatus(up.original.status)}
+                                  <span class="changeItem">签到：{isCheckedInStatus(up.original.status) ? '已→未' : '未→已'}</span>
                                 {/if}
                               {/if}
                             </td>

@@ -1,5 +1,6 @@
 <script>
   import { ArrowLeft, Calendar, UserCheck, XCircle, Clock, Award, MessageSquare, Edit3, Check, X, Tag, Plus } from 'lucide-svelte';
+  import { isPending, isRejected, isWaitlist, isCheckedIn, getSignupStatusDisplay } from '$lib/utils/signupStatusMachine.js';
 
   export let reader;
   export let stats;
@@ -58,19 +59,20 @@
   }
 
   function getStatusBadge(signup) {
-    if (signup.reviewStatus === '待审核') {
+    if (isPending(signup.status)) {
       return { class: 'pending', text: '待审核' };
     }
-    if (signup.reviewStatus === '已拒绝') {
+    if (isRejected(signup.status)) {
       return { class: 'rejected', text: '已拒绝' };
     }
-    if (signup.status === '候补') {
+    if (isWaitlist(signup.status)) {
       return { class: 'waitlist', text: `候补 #${signup.waitlistPosition}` };
     }
-    if (signup.checkedIn) {
+    if (isCheckedIn(signup.status)) {
       return { class: 'checkedIn', text: '已签到' };
     }
-    return { class: 'regular', text: '已报名' };
+    const display = getSignupStatusDisplay(signup);
+    return { class: display.cssClass, text: display.label };
   }
 </script>
 

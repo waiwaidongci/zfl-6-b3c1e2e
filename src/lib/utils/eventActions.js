@@ -1,4 +1,11 @@
 import { promoteFromWaitlist, createSignup as createSignupFromStore, cancelSignup as cancelSignupFromStore, getEventById, getSeriesEvents } from './storeUtils.js';
+import {
+  toggleCheckInWithStatus,
+  approveSignupWithStatus,
+  rejectSignupWithStatus,
+  isPending,
+  isCheckedIn
+} from './signupStatusMachine.js';
 
 export function createEventStore() {
   return {
@@ -44,68 +51,17 @@ export function toggleEventStatus(events, eventId) {
 }
 
 export function toggleCheckIn(signups, signupId) {
-  const signup = signups.find((item) => item.id === signupId);
-  if (!signup || signup.status !== '正式' || signup.reviewStatus !== '已通过') {
-    return signups;
-  }
-  return signups.map((item) =>
-    item.id === signupId
-      ? {
-          ...item,
-          checkedIn: !item.checkedIn,
-          checkedInAt: !item.checkedIn ? new Date().toLocaleString() : ''
-        }
-      : item
-  );
+  return toggleCheckInWithStatus(signups, signupId);
 }
 
 export function approveSignup(events, signups, signupId) {
-  const signup = signups.find((item) => item.id === signupId);
-  if (!signup || signup.reviewStatus !== '待审核') return signups;
-
-  const event = getEventById(events, signup.eventId);
-  if (!event) return signups;
-
-  const eventSignups = signups.filter(
-    (item) => item.eventId === event.id && item.reviewStatus === '已通过'
-  );
-  const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-  const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
-
-  let status = '正式';
-  let waitlistPosition = undefined;
-
-  if (regularCount >= Number(event.limit)) {
-    status = '候补';
-    waitlistPosition = waitlistCount + 1;
-  }
-
-  return signups.map((item) =>
-    item.id === signupId
-      ? {
-          ...item,
-          status,
-          waitlistPosition,
-          reviewStatus: '已通过',
-          reviewedAt: new Date().toLocaleString()
-        }
-      : item
-  );
+  const eventsArr = Array.isArray(events) ? events : [events];
+  return approveSignupWithStatus(eventsArr, signups, signupId);
 }
 
 export function rejectSignup(signups, signupId, rejectionReason) {
   if (!signupId || !rejectionReason?.trim()) return signups;
-  return signups.map((item) =>
-    item.id === signupId
-      ? {
-          ...item,
-          status: '已拒绝',
-          reviewStatus: '已拒绝',
-          rejectionReason: rejectionReason.trim(),
-          reviewedAt: new Date().toLocaleString()
-        }
-      : item
-  );
+  return rejectSignupWithStatus(signups, signupId, rejectionReason.trim());
 }
 
 export function handleSignupSubmit(events, signups, readers, mySignupIds, selectedEventId, signupForm) {

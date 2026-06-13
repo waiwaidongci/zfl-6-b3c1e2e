@@ -1,5 +1,18 @@
 import { linkSignupToReader } from './readerMigration.js';
 import { versionedWrite } from './syncStore.js';
+import {
+  migrateAllSignups,
+  isRegular,
+  isWaitlist,
+  isPending,
+  isApproved,
+  isPromoted,
+  isCheckedIn,
+  promoteFromWaitlistWithStatus,
+  cancelSignupWithStatus,
+  createNewSignupStatus,
+  SIGNUP_STATUS
+} from './signupStatusMachine.js';
 
 const KEYS = {
   books: 'zfl-6-books',
@@ -53,10 +66,11 @@ export function writeEvents(events) {
 
 export function readSignups() {
   const stored = safeParse(localStorage.getItem(KEYS.signups), []);
-  return stored.map((item) => {
+  const migrated = migrateAllSignups(stored);
+  return migrated.map((item) => {
     let updated = { ...item };
     if (!updated.status) {
-      updated.status = '正式';
+      updated.status = SIGNUP_STATUS.CONFIRMED;
       updated.waitlistPosition = undefined;
     }
     if (updated.reviewStatus === undefined) {
@@ -229,19 +243,19 @@ export function getEventIndexInSeries(events, eventId) {
 
 export function getRegularSignupCount(signups, eventId) {
   return signups.filter(
-    (s) => s.eventId === eventId && s.reviewStatus === '已通过' && s.status === '正式'
+    (s) => s.eventId === eventId && (isRegular(s.status) || isPromoted(s.status) || isCheckedIn(s.status))
   ).length;
 }
 
 export function getWaitlistCount(signups, eventId) {
   return signups.filter(
-    (s) => s.eventId === eventId && s.reviewStatus === '已通过' && s.status === '候补'
+    (s) => s.eventId === eventId && isWaitlist(s.status)
   ).length;
 }
 
 export function getPendingCount(signups, eventId) {
   return signups.filter(
-    (s) => s.eventId === eventId && s.reviewStatus === '待审核'
+    (s) => s.eventId === eventId && isPending(s.status)
   ).length;
 }
 
@@ -252,40 +266,7 @@ export function getSeatsLeft(events, signups, eventId) {
 }
 
 export function promoteFromWaitlist(events, signups, eventId) {
-  const event = getEventById(events, eventId);
-  if (!event) return signups;
-
-  const eventSignups = signups.filter(
-    (item) => item.eventId === eventId && item.reviewStatus === '已通过'
-  );
-  const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-  const limit = Number(event.limit);
-
-  if (regularCount < limit) {
-    const waitlist = eventSignups
-      .filter((item) => item.status === '候补')
-      .sort((a, b) => a.waitlistPosition - b.waitlistPosition);
-
-    const spotsToFill = limit - regularCount;
-    const toPromote = waitlist.slice(0, spotsToFill);
-
-    if (toPromote.length > 0) {
-      return signups.map((item) => {
-        const promotee = toPromote.find((p) => p.id === item.id);
-        if (promotee) {
-          return { ...item, status: '正式', waitlistPosition: undefined, _wasWaitlisted: true };
-        }
-        if (item.eventId === eventId && item.status === '候补') {
-          const newPosition = waitlist.findIndex((w) => w.id === item.id) - toPromote.length + 1;
-          if (newPosition > 0) {
-            return { ...item, waitlistPosition: newPosition };
-          }
-        }
-        return item;
-      });
-    }
-  }
-  return signups;
+  return promoteFromWaitlistWithStatus(events, signups, eventId);
 }
 
 export function createSignup(events, signups, eventId, signupData, readers = []) {
@@ -294,30 +275,14 @@ export function createSignup(events, signups, eventId, signupData, readers = [])
     return { success: false, signups, readers, reason: '无法报名' };
   }
 
-  const eventSignups = signups.filter(
-    (item) => item.eventId === eventId && item.reviewStatus === '已通过'
-  );
-  const regularCount = eventSignups.filter((item) => item.status === '正式').length;
-  const waitlistCount = eventSignups.filter((item) => item.status === '候补').length;
-
-  let status = '正式';
-  let waitlistPosition = undefined;
-  let reviewStatus = '已通过';
-  let rejectionReason = '';
-  let reviewedAt = '';
-
-  if (event.reviewRequired) {
-    status = '待审核';
-    reviewStatus = '待审核';
-  } else if (regularCount >= Number(event.limit)) {
-    status = '候补';
-    waitlistPosition = waitlistCount + 1;
-  }
+  const eventSignups = signups.filter((item) => item.eventId === eventId);
+  const { status, waitlistPosition } = createNewSignupStatus(event, eventSignups);
 
   const linkResult = linkSignupToReader(readers, signupData);
   const updatedReaders = linkResult.readers;
   const linkedSignupData = linkResult.signupData;
 
+  const now = new Date().toLocaleString();
   const newSignup = {
     id: crypto.randomUUID(),
     eventId,
@@ -327,12 +292,12 @@ export function createSignup(events, signups, eventId, signupData, readers = [])
     readerId: linkedSignupData.readerId,
     status,
     waitlistPosition,
-    reviewStatus,
-    rejectionReason,
-    reviewedAt,
+    reviewStatus: status === SIGNUP_STATUS.PENDING ? '待审核' : '已通过',
+    rejectionReason: '',
+    reviewedAt: status === SIGNUP_STATUS.PENDING ? '' : now,
     checkedIn: false,
     checkedInAt: '',
-    createdAt: new Date().toLocaleString()
+    createdAt: now
   };
 
   return {
@@ -346,26 +311,5 @@ export function createSignup(events, signups, eventId, signupData, readers = [])
 }
 
 export function cancelSignup(events, signups, signupId) {
-  const signup = signups.find((item) => item.id === signupId);
-  if (!signup) return signups;
-
-  let newSignups = signups.filter((item) => item.id !== signupId);
-
-  if (signup.status === '正式' && signup.reviewStatus === '已通过') {
-    newSignups = promoteFromWaitlist(events, newSignups, signup.eventId);
-  } else if (signup.status === '候补' && signup.reviewStatus === '已通过') {
-    newSignups = newSignups.map((item) => {
-      if (
-        item.eventId === signup.eventId &&
-        item.status === '候补' &&
-        item.reviewStatus === '已通过' &&
-        item.waitlistPosition > signup.waitlistPosition
-      ) {
-        return { ...item, waitlistPosition: item.waitlistPosition - 1 };
-      }
-      return item;
-    });
-  }
-
-  return newSignups;
+  return cancelSignupWithStatus(events, signups, signupId);
 }

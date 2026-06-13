@@ -1,6 +1,7 @@
 import { readBooks, writeBooks, readEvents, writeEvents, readSignups, writeSignups, readMySignupIds, writeMySignupIds, readSeries, writeSeries, KEYS } from './storeUtils.js';
 import { readReaders, writeReaders } from './readerStore.js';
 import { hasMigratedReaders, markMigrationDone, runFullMigration } from './readerMigration.js';
+import { migrateLegacySignup, normalizeEvent as normalizeEventFromMachine, normalizeSignups as normalizeSignupsFromMachine } from './signupStatusMachine.js';
 
 export function loadAllData() {
   const books = readBooks();
@@ -70,17 +71,7 @@ export function normalizeEvent(event) {
 }
 
 export function normalizeSignup(signup) {
-  let updated = { ...signup };
-  if (!updated.status) {
-    updated.status = '正式';
-    updated.waitlistPosition = undefined;
-  }
-  if (updated.reviewStatus === undefined) {
-    updated.reviewStatus = '已通过';
-    updated.rejectionReason = '';
-    updated.reviewedAt = '';
-  }
-  return updated;
+  return migrateLegacySignup(signup);
 }
 
 export function normalizeLegacyEvents(events) {
@@ -88,5 +79,5 @@ export function normalizeLegacyEvents(events) {
 }
 
 export function normalizeLegacySignups(signups) {
-  return signups.map(normalizeSignup);
+  return normalizeSignupsFromMachine(signups);
 }

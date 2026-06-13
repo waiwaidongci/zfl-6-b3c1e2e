@@ -1,4 +1,14 @@
 import { promoteFromWaitlist } from './storeUtils.js';
+import {
+  isApproved,
+  isRegular,
+  isWaitlist,
+  isPromoted,
+  isCheckedIn,
+  SIGNUP_STATUS,
+  deriveLegacyFields,
+  recountWaitlistPositions
+} from './signupStatusMachine.js';
 
 const LOG_KEY = 'zfl-6-operation-logs';
 const MAX_LOGS = 200;
@@ -276,7 +286,7 @@ function restoreSignupsForEventChange(before, after, currentEvents, currentSignu
 
       if (opType === OPERATION_TYPES.ADJUST_LIMIT && aftLimit > befLimit) {
         const beforeRegularCount = (before.signups || []).filter(
-          (s) => s.eventId === eventId && s.reviewStatus === '已通过' && s.status === '正式'
+          (s) => s.eventId === eventId && (isRegular(s.status) || isPromoted(s.status) || isCheckedIn(s.status))
         ).length;
         signups = revertWaitlistPromotions(signups, eventId, beforeRegularCount);
         skipPromoteForEvents.add(eventId);
@@ -289,16 +299,16 @@ function restoreSignupsForEventChange(before, after, currentEvents, currentSignu
 }
 
 function revertWaitlistPromotions(signups, eventId, originalLimit) {
-  const eventSignups = signups.filter((s) => s.eventId === eventId && s.reviewStatus === '已通过');
-  const regularSignups = eventSignups.filter((s) => s.status === '正式');
+  const eventSignups = signups.filter((s) => s.eventId === eventId && isApproved(s.status));
+  const regularSignups = eventSignups.filter((s) => isRegular(s.status) || isPromoted(s.status) || isCheckedIn(s.status));
   const waitlistSignups = eventSignups
-    .filter((s) => s.status === '候补')
-    .sort((a, b) => a.waitlistPosition - b.waitlistPosition);
+    .filter((s) => isWaitlist(s.status))
+    .sort((a, b) => (a.waitlistPosition || 0) - (b.waitlistPosition || 0));
 
   if (regularSignups.length <= originalLimit) return signups;
 
   const promotedSignups = regularSignups
-    .filter((s) => s._wasWaitlisted)
+    .filter((s) => isPromoted(s.status))
     .sort((a, b) => {
       const aTime = a.reviewedAt || a.createdAt;
       const bTime = b.reviewedAt || b.createdAt;
@@ -309,21 +319,26 @@ function revertWaitlistPromotions(signups, eventId, originalLimit) {
   const toRevert = promotedSignups.slice(0, toRevertCount);
   const toRevertIds = new Set(toRevert.map((s) => s.id));
 
-  return signups.map((item) => {
+  let updated = signups.map((item) => {
     if (toRevertIds.has(item.id)) {
       let maxWaitPos = 0;
       waitlistSignups.forEach((w) => {
         if (w.waitlistPosition > maxWaitPos) maxWaitPos = w.waitlistPosition;
       });
+      const derived = deriveLegacyFields(SIGNUP_STATUS.WAITLISTED);
       return {
         ...item,
-        status: '候补',
+        status: SIGNUP_STATUS.WAITLISTED,
         waitlistPosition: maxWaitPos + 1,
-        _wasWaitlisted: false
+        reviewStatus: derived.reviewStatus,
+        checkedIn: derived.checkedIn,
+        _wasWaitlisted: derived._wasWaitlisted
       };
     }
     return item;
   });
+
+  return recountWaitlistPositions(updated, eventId);
 }
 
 function restoreSignups(before, after, currentSignups) {
@@ -445,24 +460,7 @@ function fixWaitlistAfterSignupRestore(events, signups, skipPromoteForEvents) {
 
   const eventIds = new Set(result.map((s) => s.eventId));
   eventIds.forEach((eventId) => {
-    const approved = result.filter(
-      (s) => s.eventId === eventId && s.reviewStatus === '已通过'
-    );
-    const waitlist = approved
-      .filter((s) => s.status === '候补')
-      .sort((a, b) => {
-        if (a.waitlistPosition && b.waitlistPosition) {
-          return a.waitlistPosition - b.waitlistPosition;
-        }
-        return (a.createdAt || '').localeCompare(b.createdAt || '');
-      });
-
-    waitlist.forEach((w, idx) => {
-      const mapIdx = result.findIndex((s) => s.id === w.id);
-      if (mapIdx !== -1) {
-        result[mapIdx] = { ...result[mapIdx], waitlistPosition: idx + 1 };
-      }
-    });
+    result = recountWaitlistPositions(result, eventId);
 
     if (!skipSet.has(eventId)) {
       result = promoteFromWaitlist(events, result, eventId);

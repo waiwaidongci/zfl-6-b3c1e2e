@@ -18,6 +18,7 @@
   import { readReaders, writeReaders, findReaderByPhone } from '$lib/utils/readerStore.js';
   import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
+  import { isPending, isRejected, isWaitlist, isRegular, isCheckedIn, getCancelActionLabel } from '$lib/utils/signupStatusMachine.js';
 
   export let eventId;
 
@@ -266,34 +267,34 @@
       {#if hasMySignup && myLatestSignup}
         <div class="mySignupSection">
           <h3>我的报名状态</h3>
-          <article class="mySignup-card" class:waitlist-card={myLatestSignup.status === '候补'} class:pending-card={myLatestSignup.reviewStatus === '待审核'} class:rejected-card={myLatestSignup.reviewStatus === '已拒绝'}>
+          <article class="mySignup-card" class:waitlist-card={isWaitlist(myLatestSignup.status)} class:pending-card={isPending(myLatestSignup.status)} class:rejected-card={isRejected(myLatestSignup.status)}>
             <strong>{event.book}</strong>
             <span>{event.host} · {formatTime(event.time)}</span>
             <span>报名时间：{myLatestSignup.createdAt}</span>
             <div class="mySignup-status">
-              {#if myLatestSignup.reviewStatus === '待审核'}
+              {#if isPending(myLatestSignup.status)}
                 <span class="status-badge pending">待审核</span>
-              {:else if myLatestSignup.reviewStatus === '已拒绝'}
+              {:else if isRejected(myLatestSignup.status)}
                 <span class="status-badge rejected">已拒绝</span>
-              {:else if myLatestSignup.status === '正式'}
+              {:else if isRegular(myLatestSignup.status) && !isCheckedIn(myLatestSignup.status)}
                 <span class="status-badge regular">正式报名</span>
-              {:else if myLatestSignup.status === '候补'}
+              {:else if isWaitlist(myLatestSignup.status)}
                 <span class="status-badge waitlist">候补 #{myLatestSignup.waitlistPosition}</span>
               {/if}
-              {#if myLatestSignup.reviewStatus === '已通过' && myLatestSignup.status === '正式'}
-                <span class="checkin-badge" class:checked={myLatestSignup.checkedIn} class:unchecked={!myLatestSignup.checkedIn}>
-                  {myLatestSignup.checkedIn ? '已到场' : '未到场'}
+              {#if (isRegular(myLatestSignup.status)) && !isPending(myLatestSignup.status) && !isRejected(myLatestSignup.status)}
+                <span class="checkin-badge" class:checked={isCheckedIn(myLatestSignup.status)} class:unchecked={!isCheckedIn(myLatestSignup.status)}>
+                  {isCheckedIn(myLatestSignup.status) ? '已到场' : '未到场'}
                 </span>
               {/if}
-              {#if myLatestSignup.checkedIn && myLatestSignup.checkedInAt}
+              {#if isCheckedIn(myLatestSignup.status) && myLatestSignup.checkedInAt}
                 <span class="checkin-time">签到时间：{myLatestSignup.checkedInAt}</span>
               {/if}
-              {#if myLatestSignup.reviewStatus === '已拒绝' && myLatestSignup.rejectionReason}
+              {#if isRejected(myLatestSignup.status) && myLatestSignup.rejectionReason}
                 <span class="rejection-reason-display">拒绝原因：{myLatestSignup.rejectionReason}</span>
               {/if}
             </div>
             <button class="ghost cancel-btn" on:click={() => handleCancelSignup(myLatestSignup.id)}>
-              {myLatestSignup.reviewStatus === '待审核' ? '取消申请' : (myLatestSignup.reviewStatus === '已拒绝' ? '删除记录' : (myLatestSignup.status === '正式' ? '取消报名' : '退出候补'))}
+              {getCancelActionLabel(myLatestSignup)}
             </button>
           </article>
         </div>

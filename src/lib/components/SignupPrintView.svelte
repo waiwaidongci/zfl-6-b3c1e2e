@@ -1,5 +1,6 @@
 <script>
   import { getGroupedSignups, getRegularCheckedInCount } from '$lib/utils/signupUtils.js';
+  import { isCheckedIn as isCheckedInStatus, isWaitlist as isWaitlistStatus } from '$lib/utils/signupStatusMachine.js';
   import { ArrowLeft, Printer } from 'lucide-svelte';
 
   export let event;
@@ -68,13 +69,13 @@
           </thead>
           <tbody>
             {#each grouped.regular as item, idx}
-              <tr class:checked={item.checkedIn}>
+              <tr class:checked={isCheckedInStatus(item.status)}>
                 <td>{idx + 1}</td>
                 <td class="name">{item.name}</td>
                 <td>{item.phone}</td>
                 <td class="answer">{item.answer || '-'}</td>
                 <td class="checkinStatus">
-                  {#if item.checkedIn}
+                  {#if isCheckedInStatus(item.status)}
                     <span class="statusBadge checked">已到场</span>
                     {#if item.checkedInAt}
                       <span class="checkinTime">{item.checkedInAt}</span>
@@ -105,14 +106,14 @@
           </thead>
           <tbody>
             {#each grouped.waitlist as item, idx}
-              <tr class:checked={item.checkedIn}>
+              <tr class:checked={isCheckedInStatus(item.status)}>
                 <td>{idx + 1}</td>
                 <td class="name">{item.name}</td>
                 <td>{item.phone}</td>
                 <td class="answer">{item.answer || '-'}</td>
                 <td class="checkinStatus">
                   <div class="waitlistPositionTag">候补 #{item.waitlistPosition}</div>
-                  {#if item.checkedIn}
+                  {#if isCheckedInStatus(item.status)}
                     <span class="statusBadge checked">已到场</span>
                     {#if item.checkedInAt}
                       <span class="checkinTime">{item.checkedInAt}</span>
@@ -143,14 +144,14 @@
           </thead>
           <tbody>
             {#each grouped.pending as item, idx}
-              <tr class:checked={item.checkedIn}>
+              <tr class:checked={isCheckedInStatus(item.status)}>
                 <td>{idx + 1}</td>
                 <td class="name">{item.name}</td>
                 <td>{item.phone}</td>
                 <td class="answer">{item.answer || '-'}</td>
                 <td class="checkinStatus">
                   <div class="pendingTime">报名：{item.createdAt}</div>
-                  {#if item.checkedIn}
+                  {#if isCheckedInStatus(item.status)}
                     <span class="statusBadge checked">已到场</span>
                     {#if item.checkedInAt}
                       <span class="checkinTime">{item.checkedInAt}</span>
