@@ -147,6 +147,7 @@
   let _conflictBanner = null;
   let _pendingChangedKeys = [];
   let _unsubscribeSync = null;
+  let _editingReaderDetail = false;
 
   function scrollToSignupGroup(targetType) {
     if (!signupListContainer) return;
@@ -197,7 +198,8 @@
         editingEventId || editingBookId || editingSeriesId ||
         addingEventToSeriesId || rejectingSignupId ||
         importCsvText.trim() ||
-        signupForm.name?.trim() || signupForm.phone?.trim() || signupForm.answer?.trim()
+        signupForm.name?.trim() || signupForm.phone?.trim() || signupForm.answer?.trim() ||
+        _editingReaderDetail
       );
 
       if (isDirty) {
@@ -1647,6 +1649,7 @@
                 reader={selectedReader}
                 stats={selectedReaderStats}
                 onBack={() => { selectedReaderId = ''; }}
+                onEditStateChange={(editing) => { _editingReaderDetail = editing; }}
                 onUpdateNote={(note) => {
                   const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
                   const beforeNote = selectedReader?.note || '';

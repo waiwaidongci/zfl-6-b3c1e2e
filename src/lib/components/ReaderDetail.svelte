@@ -7,10 +7,13 @@
   export let onUpdateNote;
   export let onAddTag;
   export let onRemoveTag;
+  export let onEditStateChange = () => {};
 
   let editingNote = false;
   let noteDraft = '';
   let newTagInput = '';
+
+  $: onEditStateChange(editingNote || !!newTagInput.trim());
 
   function startEditNote() {
     noteDraft = reader.note || '';
