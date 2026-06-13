@@ -8,6 +8,7 @@ import {
   isApproved,
   isPromoted,
   isCheckedIn,
+  isRejected,
   promoteFromWaitlistWithStatus,
   cancelSignupWithStatus,
   createNewSignupStatus,
@@ -334,4 +335,109 @@ export function createSignup(events, signups, eventId, signupData, readers = [])
 
 export function cancelSignup(events, signups, signupId) {
   return cancelSignupWithStatus(events, signups, signupId);
+}
+
+export function batchSignup(events, signups, eventIds, signupData, readers = []) {
+  if (!eventIds.length || !signupData.name?.trim()) {
+    return { success: false, signups, readers, results: [], reason: '无法报名' };
+  }
+
+  let updatedSignups = [...signups];
+  let updatedReaders = [...readers];
+  const results = [];
+  const newMySignupIds = [];
+  let matchedReader = null;
+
+  for (const eventId of eventIds) {
+    const result = createSignup(events, updatedSignups, eventId, signupData, updatedReaders);
+    if (result.success) {
+      updatedSignups = result.signups;
+      updatedReaders = result.readers;
+      newMySignupIds.push(result.signup.id);
+      if (!matchedReader && result.matchedReader) {
+        matchedReader = result.matchedReader;
+      }
+      results.push({
+        eventId,
+        signup: result.signup,
+        success: true
+      });
+    } else {
+      results.push({
+        eventId,
+        signup: null,
+        success: false,
+        reason: result.reason || '无法报名'
+      });
+    }
+  }
+
+  return {
+    success: results.some((r) => r.success),
+    signups: updatedSignups,
+    readers: updatedReaders,
+    results,
+    newMySignupIds,
+    matchedReader
+  };
+}
+
+export function batchCancelSeriesSignups(events, signups, mySignupIds, signupIdsToCancel) {
+  let updatedSignups = [...signups];
+  let updatedMySignupIds = [...mySignupIds];
+  const results = [];
+
+  for (const signupId of signupIdsToCancel) {
+    const signup = updatedSignups.find((s) => s.id === signupId);
+    if (!signup) {
+      results.push({ signupId, success: false, reason: '报名记录不存在' });
+      continue;
+    }
+    updatedSignups = cancelSignupWithStatus(events, updatedSignups, signupId);
+    updatedMySignupIds = updatedMySignupIds.filter((mid) => mid !== signupId);
+    results.push({ signupId, eventId: signup.eventId, success: true });
+  }
+
+  return {
+    signups: updatedSignups,
+    mySignupIds: updatedMySignupIds,
+    results
+  };
+}
+
+export function getSeriesSignupSummary(events, signups, mySignupIds, seriesId) {
+  const sEvents = getSeriesEvents(events, seriesId);
+  const summary = {
+    confirmed: [],
+    waitlisted: [],
+    pending: [],
+    rejected: [],
+    unavailable: [],
+    notSignedUp: []
+  };
+
+  for (const ev of sEvents) {
+    const mySignup = signups.find(
+      (s) => s.eventId === ev.id && mySignupIds.includes(s.id)
+    );
+    if (!mySignup) {
+      if (ev.status !== '开放报名') {
+        summary.unavailable.push({ eventId: ev.id, event: ev });
+      } else {
+        summary.notSignedUp.push({ eventId: ev.id, event: ev });
+      }
+    } else if (isPending(mySignup.status)) {
+      summary.pending.push({ eventId: ev.id, event: ev, signup: mySignup });
+    } else if (isRejected(mySignup.status)) {
+      summary.rejected.push({ eventId: ev.id, event: ev, signup: mySignup });
+    } else if (isWaitlist(mySignup.status)) {
+      summary.waitlisted.push({ eventId: ev.id, event: ev, signup: mySignup });
+    } else if (isRegular(mySignup.status) || isPromoted(mySignup.status) || isCheckedIn(mySignup.status)) {
+      summary.confirmed.push({ eventId: ev.id, event: ev, signup: mySignup });
+    }
+  }
+
+  summary.totalSignedUp = summary.confirmed.length + summary.waitlisted.length + summary.pending.length;
+  summary.totalEvents = sEvents.length;
+  return summary;
 }

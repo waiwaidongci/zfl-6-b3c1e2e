@@ -1669,6 +1669,278 @@ assertEqual(smGroups.pending, 1, 'opsStats统一：groupsSummary.pending=1');
 assertEqual(smGroups.rejected, 1, 'opsStats统一：groupsSummary.rejected=1');
 
 
+console.log('\n=== 整季报名（batchSignup）测试 ===\n');
+
+import {
+  batchSignup,
+  batchCancelSeriesSignups,
+  getSeriesSignupSummary
+} from '../src/lib/utils/storeUtils.js';
+
+console.log('--- batchSignup：混合场次状态（开放+关闭+审核） ---');
+const batchMixedEvents = [
+  { id: 'bme1', book: '开放活动', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'bs1' },
+  { id: 'bme2', book: '关闭活动', host: 'H', time: '2025-08-02T19:00', limit: 10, status: '已关闭', reviewRequired: false, seriesId: 'bs1' },
+  { id: 'bme3', book: '审核活动', host: 'H', time: '2025-08-03T19:00', limit: 10, status: '开放报名', reviewRequired: true, seriesId: 'bs1' },
+  { id: 'bme4', book: '另一开放', host: 'H', time: '2025-08-04T19:00', limit: 5, status: '开放报名', reviewRequired: false, seriesId: 'bs1' }
+];
+const batchMixedResult = batchSignup(
+  batchMixedEvents, [], ['bme1', 'bme2', 'bme3', 'bme4'],
+  { name: '批量用户', phone: '13800009999', answer: '整季报名' }, []
+);
+assert(batchMixedResult.success, 'batchSignup混合状态：总体成功');
+assertEqual(batchMixedResult.results.length, 4, 'batchSignup混合状态：4个结果');
+
+const openResult = batchMixedResult.results.find((r) => r.eventId === 'bme1');
+assert(openResult && openResult.success, 'batchSignup混合状态：开放活动成功');
+assertEqual(openResult.signup.status, '正式', 'batchSignup混合状态：开放活动=正式');
+
+const batchClosedResult = batchMixedResult.results.find((r) => r.eventId === 'bme2');
+assert(batchClosedResult && !batchClosedResult.success, 'batchSignup混合状态：关闭活动失败');
+
+const batchReviewResult = batchMixedResult.results.find((r) => r.eventId === 'bme3');
+assert(batchReviewResult && batchReviewResult.success, 'batchSignup混合状态：审核活动成功');
+assertEqual(batchReviewResult.signup.status, '待审核', 'batchSignup混合状态：审核活动=待审核');
+assertEqual(batchReviewResult.signup.reviewStatus, '待审核', 'batchSignup混合状态：审核活动reviewStatus=待审核');
+
+const anotherOpenResult = batchMixedResult.results.find((r) => r.eventId === 'bme4');
+assert(anotherOpenResult && anotherOpenResult.success, 'batchSignup混合状态：另一开放活动成功');
+assertEqual(anotherOpenResult.signup.status, '正式', 'batchSignup混合状态：另一开放活动=正式');
+
+assertEqual(batchMixedResult.newMySignupIds.length, 3, 'batchSignup混合状态：3个新mySignupId');
+
+console.log('\n--- batchSignup：满员候补 ---');
+const fullEvents = [
+  { id: 'bfe1', book: '满员活动', host: 'H', time: '2025-08-01T19:00', limit: 1, status: '开放报名', reviewRequired: false, seriesId: 'bf1' },
+  { id: 'bfe2', book: '有空位', host: 'H', time: '2025-08-02T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'bf1' }
+];
+const fullExistingSignups = [
+  { id: 'bfs1', eventId: 'bfe1', name: '先报人', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-01' }
+];
+const fullResult = batchSignup(
+  fullEvents, fullExistingSignups, ['bfe1', 'bfe2'],
+  { name: '后报人', phone: '13800008888', answer: '' }, []
+);
+assert(fullResult.success, 'batchSignup满员候补：总体成功');
+const fullEv1Result = fullResult.results.find((r) => r.eventId === 'bfe1');
+assertEqual(fullEv1Result.signup.status, '候补', 'batchSignup满员候补：满员活动=候补');
+assert(fullEv1Result.signup.waitlistPosition > 0, 'batchSignup满员候补：候补有位置编号');
+const fullEv2Result = fullResult.results.find((r) => r.eventId === 'bfe2');
+assertEqual(fullEv2Result.signup.status, '正式', 'batchSignup满员候补：有空位=正式');
+
+console.log('\n--- batchSignup：审核活动满员进入候补 ---');
+const reviewFullEvents = [
+  { id: 'brf1', book: '审核满员', host: 'H', time: '2025-08-01T19:00', limit: 1, status: '开放报名', reviewRequired: true, seriesId: 'br1' }
+];
+const reviewFullExisting = [
+  { id: 'brfs1', eventId: 'brf1', name: '先审', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-01' }
+];
+const reviewFullResult = batchSignup(
+  reviewFullEvents, reviewFullExisting, ['brf1'],
+  { name: '后审', phone: '13800007777', answer: '' }, []
+);
+assert(reviewFullResult.success, 'batchSignup审核满员：成功');
+assertEqual(reviewFullResult.results[0].signup.status, '待审核', 'batchSignup审核满员：审核活动不管满不满都是待审核');
+
+console.log('\n--- batchSignup：重复手机号再次报名（不同活动） ---');
+const dupPhoneEvents = [
+  { id: 'bdp1', book: '活动A', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'bd1' },
+  { id: 'bdp2', book: '活动B', host: 'H', time: '2025-08-02T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'bd1' }
+];
+const dupReaders = [
+  { id: 'dr1', name: '老读者', phone: '13800009999', note: '常客', tags: [], createdAt: '2025-01-01', updatedAt: '2025-01-01' }
+];
+const dupResult = batchSignup(
+  dupPhoneEvents, [], ['bdp1', 'bdp2'],
+  { name: '新老读者', phone: '13800009999', answer: '再来一次' }, dupReaders
+);
+assert(dupResult.success, 'batchSignup重复手机：成功');
+assertEqual(dupResult.readers.length, 1, 'batchSignup重复手机：读者数=1（不重复创建）');
+const dupReader = dupResult.readers[0];
+assertEqual(dupReader.id, 'dr1', 'batchSignup重复手机：复用老读者ID');
+const dupSignups = dupResult.signups.filter((s) => s.readerId === 'dr1');
+assertEqual(dupSignups.length, 2, 'batchSignup重复手机：两条报名都关联到同一读者');
+
+console.log('\n--- batchSignup：空选择和空姓名 ---');
+const emptySelResult = batchSignup(
+  [{ id: 'e1', book: 'A', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false }], [], [],
+  { name: '有人', phone: '1' }, []
+);
+assert(!emptySelResult.success, 'batchSignup空选择：失败');
+assertEqual(emptySelResult.results.length, 0, 'batchSignup空选择：0个结果');
+
+const emptyNameResult = batchSignup(
+  [{ id: 'e1', book: 'A', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false }], [], ['e1'],
+  { name: '', phone: '1' }, []
+);
+assert(!emptyNameResult.success, 'batchSignup空姓名：失败');
+
+console.log('\n--- batchCancelSeriesSignups：批量取消+候补转正 ---');
+const cancelEvents = [
+  { id: 'bce1', book: '取消活动1', host: 'H', time: '2025-08-01T19:00', limit: 1, status: '开放报名', reviewRequired: false, seriesId: 'bc1' },
+  { id: 'bce2', book: '取消活动2', host: 'H', time: '2025-08-02T19:00', limit: 2, status: '开放报名', reviewRequired: false, seriesId: 'bc1' }
+];
+const batchCancelSignups = [
+  { id: 'bcs1', eventId: 'bce1', name: '甲', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-01' },
+  { id: 'bcs2', eventId: 'bce1', name: '乙', phone: '2', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-02' },
+  { id: 'bcs3', eventId: 'bce2', name: '丙', phone: '3', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-03' },
+  { id: 'bcs4', eventId: 'bce2', name: '丁', phone: '4', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-04' }
+];
+const cancelMyIds = ['bcs1', 'bcs3'];
+const batchCancelResult = batchCancelSeriesSignups(cancelEvents, batchCancelSignups, cancelMyIds, ['bcs1', 'bcs3']);
+assertEqual(batchCancelResult.results.length, 2, 'batchCancel：2个结果');
+assert(batchCancelResult.results.every((r) => r.success), 'batchCancel：全部成功');
+
+const cancelled1 = batchCancelResult.signups.find((s) => s.id === 'bcs1');
+assertEqual(cancelled1.status, '已取消', 'batchCancel：bcs1已取消');
+const cancelled3 = batchCancelResult.signups.find((s) => s.id === 'bcs3');
+assertEqual(cancelled3.status, '已取消', 'batchCancel：bcs3已取消');
+
+const promoted2 = batchCancelResult.signups.find((s) => s.id === 'bcs2');
+assertEqual(promoted2.status, '候补转正', 'batchCancel：bcs2候补转正');
+const promoted4 = batchCancelResult.signups.find((s) => s.id === 'bcs4');
+assertEqual(promoted4.status, '候补转正', 'batchCancel：bcs4候补转正');
+
+assertEqual(batchCancelResult.mySignupIds.length, 0, 'batchCancel：mySignupIds清空');
+
+console.log('\n--- batchCancelSeriesSignups：取消候补（重编号） ---');
+const wlCancelEvents = [
+  { id: 'bwce1', book: '候补取消', host: 'H', time: '2025-08-01T19:00', limit: 1, status: '开放报名', reviewRequired: false, seriesId: 'bwc1' }
+];
+const wlCancelSignups = [
+  { id: 'bwcs1', eventId: 'bwce1', name: '正式', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-01' },
+  { id: 'bwcs2', eventId: 'bwce1', name: '候补1', phone: '2', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-02' },
+  { id: 'bwcs3', eventId: 'bwce1', name: '候补2', phone: '3', status: '候补', reviewStatus: '已通过', waitlistPosition: 2, checkedIn: false, _wasWaitlisted: false, createdAt: '2025-01-03' }
+];
+const wlCancelResult = batchCancelSeriesSignups(wlCancelEvents, wlCancelSignups, ['bwcs2'], ['bwcs2']);
+assert(wlCancelResult.results[0].success, 'batchCancel候补：成功');
+const remainingWl = wlCancelResult.signups.find((s) => s.id === 'bwcs3');
+assertEqual(remainingWl.status, '候补', 'batchCancel候补：剩余仍为候补');
+assertEqual(remainingWl.waitlistPosition, 1, 'batchCancel候补：剩余候补位置重编号为1');
+
+console.log('\n--- batchCancelSeriesSignups：取消不存在的ID ---');
+const nonExistResult = batchCancelSeriesSignups([], [], [], ['nonexist']);
+assertEqual(nonExistResult.results.length, 1, 'batchCancel不存在：1个结果');
+assert(!nonExistResult.results[0].success, 'batchCancel不存在：失败');
+
+console.log('\n--- getSeriesSignupSummary：综合汇总 ---');
+const summaryEvents = [
+  { id: 'sse1', book: '正式场', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'ss1' },
+  { id: 'sse2', book: '候补场', host: 'H', time: '2025-08-02T19:00', limit: 1, status: '开放报名', reviewRequired: false, seriesId: 'ss1' },
+  { id: 'sse3', book: '审核场', host: 'H', time: '2025-08-03T19:00', limit: 10, status: '开放报名', reviewRequired: true, seriesId: 'ss1' },
+  { id: 'sse4', book: '关闭场', host: 'H', time: '2025-08-04T19:00', limit: 10, status: '已关闭', reviewRequired: false, seriesId: 'ss1' },
+  { id: 'sse5', book: '未报场', host: 'H', time: '2025-08-05T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'ss1' }
+];
+const summarySignups = [
+  { id: 'sss1', eventId: 'sse1', name: '我', phone: '1', status: '正式', reviewStatus: '已通过', checkedIn: false, _wasWaitlisted: false },
+  { id: 'sss2', eventId: 'sse2', name: '我', phone: '1', status: '候补', reviewStatus: '已通过', waitlistPosition: 1, checkedIn: false, _wasWaitlisted: false },
+  { id: 'sss3', eventId: 'sse3', name: '我', phone: '1', status: '待审核', reviewStatus: '待审核', checkedIn: false }
+];
+const summaryMyIds = ['sss1', 'sss2', 'sss3'];
+const summary = getSeriesSignupSummary(summaryEvents, summarySignups, summaryMyIds, 'ss1');
+
+assertEqual(summary.confirmed.length, 1, 'getSeriesSignupSummary：1个正式');
+assertEqual(summary.confirmed[0].eventId, 'sse1', 'getSeriesSignupSummary：正式=第1场');
+assertEqual(summary.waitlisted.length, 1, 'getSeriesSignupSummary：1个候补');
+assertEqual(summary.waitlisted[0].eventId, 'sse2', 'getSeriesSignupSummary：候补=第2场');
+assertEqual(summary.pending.length, 1, 'getSeriesSignupSummary：1个待审核');
+assertEqual(summary.pending[0].eventId, 'sse3', 'getSeriesSignupSummary：待审核=第3场');
+assertEqual(summary.unavailable.length, 1, 'getSeriesSignupSummary：1个不可报名（已关闭）');
+assertEqual(summary.unavailable[0].eventId, 'sse4', 'getSeriesSignupSummary：不可报名=第4场');
+assertEqual(summary.notSignedUp.length, 1, 'getSeriesSignupSummary：1个未报名（开放但未选）');
+assertEqual(summary.notSignedUp[0].eventId, 'sse5', 'getSeriesSignupSummary：未报名=第5场');
+assertEqual(summary.totalSignedUp, 3, 'getSeriesSignupSummary：总已报名=3');
+assertEqual(summary.totalEvents, 5, 'getSeriesSignupSummary：总活动=5');
+
+console.log('\n--- 整季报名→取消→候补晋升端到端 ---');
+const e2eEvents = [
+  { id: 'ee1', book: 'E2E活动1', host: 'H', time: '2025-08-01T19:00', limit: 2, status: '开放报名', reviewRequired: false, seriesId: 'es1' },
+  { id: 'ee2', book: 'E2E活动2', host: 'H', time: '2025-08-02T19:00', limit: 1, status: '开放报名', reviewRequired: true, seriesId: 'es1' }
+];
+const e2eSignup1 = batchSignup(
+  e2eEvents, [], ['ee1', 'ee2'],
+  { name: '读者A', phone: '13800001111', answer: '第一次' }, []
+);
+assert(e2eSignup1.success, 'E2E：第一次报名成功');
+assertEqual(e2eSignup1.results.length, 2, 'E2E：2个结果');
+
+const e2eSignup2 = batchSignup(
+  e2eEvents, e2eSignup1.signups, ['ee1', 'ee2'],
+  { name: '读者B', phone: '13800002222', answer: '第二次' }, e2eSignup1.readers
+);
+assert(e2eSignup2.success, 'E2E：第二次报名成功');
+const e2eEv1B = e2eSignup2.results.find((r) => r.eventId === 'ee1');
+assertEqual(e2eEv1B.signup.status, '正式', 'E2E：读者B活动1=正式');
+const e2eEv2B = e2eSignup2.results.find((r) => r.eventId === 'ee2');
+assertEqual(e2eEv2B.signup.status, '待审核', 'E2E：读者B活动2=待审核');
+
+const e2eSignup3 = batchSignup(
+  e2eEvents, e2eSignup2.signups, ['ee1'],
+  { name: '读者C', phone: '13800003333', answer: '第三次' }, e2eSignup2.readers
+);
+const e2eEv1C = e2eSignup3.results.find((r) => r.eventId === 'ee1');
+assertEqual(e2eEv1C.signup.status, '候补', 'E2E：读者C活动1=候补（满员）');
+
+const allMyIds = [
+  ...e2eSignup1.newMySignupIds,
+  ...e2eSignup2.newMySignupIds,
+  ...e2eSignup3.newMySignupIds
+];
+
+const aSignup = e2eSignup1.results.find((r) => r.eventId === 'ee1').signup;
+const e2eCancelResult = batchCancelSeriesSignups(e2eEvents, e2eSignup3.signups, allMyIds, [aSignup.id]);
+const cancelledA = e2eCancelResult.signups.find((s) => s.id === aSignup.id);
+assertEqual(cancelledA.status, '已取消', 'E2E：读者A已取消');
+const promotedC = e2eCancelResult.signups.find((s) => s.readerId === e2eEv1C.signup.readerId && s.eventId === 'ee1' && s.id === e2eEv1C.signup.id);
+assertEqual(promotedC.status, '候补转正', 'E2E：读者C候补转正');
+
+const e2eSummary = getSeriesSignupSummary(e2eEvents, e2eCancelResult.signups, e2eCancelResult.mySignupIds, 'es1');
+assertEqual(e2eSummary.confirmed.length, 1, 'E2E汇总：1个正式（读者B在活动1）');
+assertEqual(e2eSummary.totalSignedUp, 2, 'E2E汇总：总已报名=2（正式+待审核，候补转正归入confirmed）');
+assertEqual(e2eSummary.waitlisted.length, 0, 'E2E汇总：无候补（读者C已转正）');
+assertEqual(e2eSummary.pending.length, 1, 'E2E汇总：1个待审核（读者B在活动2）');
+
+console.log('\n--- batchSignup + opsStats口径一致 ---');
+const batchStatsEvents = [
+  { id: 'bste1', book: '统计活动1', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false, seriesId: 'bst1' },
+  { id: 'bste2', book: '统计活动2', host: 'H', time: '2025-08-02T19:00', limit: 10, status: '开放报名', reviewRequired: true, seriesId: 'bst1' }
+];
+const batchStatsResult = batchSignup(
+  batchStatsEvents, [], ['bste1', 'bste2'],
+  { name: '统计用户', phone: '13800006666', answer: '' }, []
+);
+const batchStats = getEventStats(batchStatsEvents, batchStatsResult.signups, []);
+const e1Stat = batchStats.find((s) => s.eventId === 'bste1');
+assertEqual(e1Stat.regularCount, 1, 'batchStats：活动1正式=1');
+assertEqual(e1Stat.pendingCount, 0, 'batchStats：活动1待审核=0');
+const e2Stat = batchStats.find((s) => s.eventId === 'bste2');
+assertEqual(e2Stat.pendingCount, 1, 'batchStats：活动2待审核=1');
+assertEqual(e2Stat.regularCount, 0, 'batchStats：活动2正式=0');
+
+const batchAgg = getAggregateStats(batchStats);
+assertEqual(batchAgg.totalSignups, 2, 'batchStats口径：总报名=2');
+assertEqual(batchAgg.totalPendingBacklog, 1, 'batchStats口径：总待审核=1');
+
+const batchGroups = getSignupGroupsSummary(batchStats, batchStatsResult.signups);
+assertEqual(batchGroups.total, 2, 'batchStats口径：groupsSummary.total=2');
+assertEqual(batchGroups.pending, 1, 'batchStats口径：groupsSummary.pending=1');
+assertEqual(batchGroups.regular, 1, 'batchStats口径：groupsSummary.regular=1');
+
+console.log('\n--- batchSignup + readerStats一致 ---');
+const batchReaderResult = batchSignup(
+  [{ id: 'bre1', book: '读者统计', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false }],
+  [], ['bre1'],
+  { name: '统计读者', phone: '13800005555', answer: '备注' }, []
+);
+assertEqual(batchReaderResult.readers.length, 1, 'batchReaderStats：创建了1个读者');
+const batchReader = batchReaderResult.readers[0];
+assertEqual(batchReader.phone, '13800005555', 'batchReaderStats：读者手机号正确');
+const readerStatsResult = getReaderStats(batchReader.id, batchReaderResult.signups, [{ id: 'bre1', book: '读者统计', host: 'H', time: '2025-08-01T19:00', limit: 10, status: '开放报名', reviewRequired: false }]);
+assertEqual(readerStatsResult.totalEvents, 1, 'batchReaderStats：读者总参加=1');
+assertEqual(readerStatsResult.totalSignups, 1, 'batchReaderStats：读者总报名=1');
+assertEqual(readerStatsResult.latestAnswer, '备注', 'batchReaderStats：读者最新回答正确');
+
+
 console.log(`结果: ${passed} 通过, ${failed} 失败`);
 if (failed > 0) {
   console.error('\n⚠️ 有测试失败，请检查！');
