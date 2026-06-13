@@ -8,12 +8,20 @@
   export let onAddTag;
   export let onRemoveTag;
   export let onEditStateChange = () => {};
+  export let resetEditToken = 0;
 
   let editingNote = false;
   let noteDraft = '';
   let newTagInput = '';
+  let lastResetEditToken = resetEditToken;
 
   $: onEditStateChange(editingNote || !!newTagInput.trim());
+  $: if (resetEditToken !== lastResetEditToken) {
+    lastResetEditToken = resetEditToken;
+    editingNote = false;
+    noteDraft = '';
+    newTagInput = '';
+  }
 
   function startEditNote() {
     noteDraft = reader.note || '';

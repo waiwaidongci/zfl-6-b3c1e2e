@@ -65,17 +65,28 @@
   } from '$lib/utils/operationLog.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
 
+  const seedBookIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+  const seedSeriesId = crypto.randomUUID();
+
   const seedBooks = [
-    { id: crypto.randomUUID(), title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
-    { id: crypto.randomUUID(), title: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', question: '是否读完全文？' }
+    { id: seedBookIds[0], title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
+    { id: seedBookIds[1], title: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', question: '是否读完全文？' },
+    { id: seedBookIds[2], title: '浮木', author: '杨本芬', description: '《浮木》是《秋园》的续集，讲述了秋园一家在新中国成立后的生活变迁。', question: '哪个片段最打动你？' },
+    { id: seedBookIds[3], title: '我本芬芳', author: '杨本芬', description: '《我本芬芳》讲述了上世纪六七十年代一个女性的婚姻困境。', question: '你如何看待女主角的选择？' },
+    { id: seedBookIds[4], title: '三体', author: '刘慈欣', description: '《三体》是刘慈欣的科幻代表作，讲述了人类与外星文明的首次接触。', question: '你认为黑暗森林法则成立吗？' },
+    { id: seedBookIds[5], title: '百年孤独', author: '加西亚·马尔克斯', description: '《百年孤独》是魔幻现实主义文学的代表作，讲述了布恩迪亚家族七代人的传奇故事。', question: '你如何理解书中的孤独主题？' }
   ];
 
   const seedEvents = [
-    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名', reviewRequired: false },
-    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(10)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名', reviewRequired: false }
+    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 1, _fromTemplate: true, _templateBookId: seedBookIds[0] },
+    { id: crypto.randomUUID(), book: '浮木', author: '杨本芬', description: '《浮木》是《秋园》的续集，讲述了秋园一家在新中国成立后的生活变迁。', host: '店员阿檀', time: `${iso(10)}T19:30`, limit: 8, question: '哪个片段最打动你？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 2, _fromTemplate: true, _templateBookId: seedBookIds[2] },
+    { id: crypto.randomUUID(), book: '我本芬芳', author: '杨本芬', description: '《我本芬芳》讲述了上世纪六七十年代一个女性的婚姻困境。', host: '店员阿檀', time: `${iso(17)}T19:30`, limit: 8, question: '你如何看待女主角的选择？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 3, _fromTemplate: true, _templateBookId: seedBookIds[3] },
+    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(5)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名', reviewRequired: false }
   ];
 
-  const seedSeries = [];
+  const seedSeries = [
+    { id: seedSeriesId, title: '杨本芬女性三部曲', description: '连续三周共读杨本芬笔下的女性故事，感受大时代背景下普通人的命运浮沉。', createdAt: new Date().toLocaleString() }
+  ];
 
   let books = seedBooks;
   let events = seedEvents;
@@ -109,6 +120,24 @@
   let addingEventToSeriesId = '';
   let seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
   let selectedSeriesBookId = '';
+  let batchCreatingForSeriesId = '';
+  let batchUpdatingForSeriesId = '';
+  let batchCreateForm = {
+    bookIds: [],
+    host: '',
+    limit: 10,
+    question: '',
+    startDate: `${iso(7)}T19:30`,
+    intervalDays: 7,
+    status: '开放报名',
+    reviewRequired: false
+  };
+  let batchUpdateForm = {
+    host: '',
+    limit: null,
+    status: null,
+    reviewRequired: null
+  };
   let rejectingSignupId = '';
   let rejectionReason = '';
 
@@ -148,6 +177,7 @@
   let _pendingChangedKeys = [];
   let _unsubscribeSync = null;
   let _editingReaderDetail = false;
+  let _readerDetailResetToken = 0;
 
   function scrollToSignupGroup(targetType) {
     if (!signupListContainer) return;
@@ -239,6 +269,8 @@
     const changedKeys = [..._pendingChangedKeys];
     _conflictBanner = null;
     _pendingChangedKeys = [];
+    _editingReaderDetail = false;
+    _readerDetailResetToken += 1;
     applyExternalReload(changedKeys);
   }
 
@@ -407,6 +439,178 @@
     addingEventToSeriesId = '';
     selectedSeriesBookId = '';
     seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+  }
+
+  function startBatchCreate(seriesId) {
+    batchCreatingForSeriesId = seriesId;
+    batchUpdatingForSeriesId = '';
+    addingEventToSeriesId = '';
+    batchCreateForm = {
+      bookIds: [],
+      host: '',
+      limit: 10,
+      question: '',
+      startDate: `${iso(7)}T19:30`,
+      intervalDays: 7,
+      status: '开放报名',
+      reviewRequired: false
+    };
+  }
+
+  function cancelBatchCreate() {
+    batchCreatingForSeriesId = '';
+    batchCreateForm = {
+      bookIds: [],
+      host: '',
+      limit: 10,
+      question: '',
+      startDate: `${iso(7)}T19:30`,
+      intervalDays: 7,
+      status: '开放报名',
+      reviewRequired: false
+    };
+  }
+
+  function handleBatchCreate() {
+    if (!batchCreatingForSeriesId) return;
+
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const seriesObj = series.find((s) => s.id === batchCreatingForSeriesId);
+
+    const result = batchCreateEvents(series, events, batchCreatingForSeriesId, batchCreateForm, books);
+
+    if (!result.success) {
+      alert(result.reason || '批量生成失败');
+      return;
+    }
+
+    events = result.events;
+
+    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+    const target = {
+      seriesId: batchCreatingForSeriesId,
+      seriesName: seriesObj?.title || '',
+      newEventIds: result.createdEvents.map((e) => e.id)
+    };
+    const description = generateDescription(OPERATION_TYPES.BATCH_CREATE_EVENTS, target, {
+      eventCount: result.createdEvents.length,
+      seriesName: seriesObj?.title || ''
+    });
+    const res = recordOperation(
+      operationLogs,
+      OPERATION_TYPES.BATCH_CREATE_EVENTS,
+      description,
+      target,
+      beforeSnapshot,
+      afterSnapshot,
+      {
+        seriesName: seriesObj?.title || '',
+        eventCount: result.createdEvents.length,
+        createdEvents: result.createdEvents,
+        batchConfig: { ...batchCreateForm }
+      }
+    );
+    operationLogs = res.logs;
+
+    cancelBatchCreate();
+  }
+
+  function startBatchUpdate(seriesId) {
+    batchUpdatingForSeriesId = seriesId;
+    batchCreatingForSeriesId = '';
+    addingEventToSeriesId = '';
+    batchUpdateForm = {
+      host: '',
+      limit: null,
+      status: null,
+      reviewRequired: null
+    };
+  }
+
+  function cancelBatchUpdate() {
+    batchUpdatingForSeriesId = '';
+    batchUpdateForm = {
+      host: '',
+      limit: null,
+      status: null,
+      reviewRequired: null
+    };
+  }
+
+  function handleBatchUpdate() {
+    if (!batchUpdatingForSeriesId) return;
+
+    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const seriesObj = series.find((s) => s.id === batchUpdatingForSeriesId);
+
+    const updates = {};
+    if (batchUpdateForm.host.trim()) updates.host = batchUpdateForm.host.trim();
+    if (batchUpdateForm.limit !== null && batchUpdateForm.limit !== undefined) updates.limit = batchUpdateForm.limit;
+    if (batchUpdateForm.status !== null) updates.status = batchUpdateForm.status;
+    if (batchUpdateForm.reviewRequired !== null) updates.reviewRequired = batchUpdateForm.reviewRequired;
+
+    if (Object.keys(updates).length === 0) {
+      alert('请至少选择一项要更新的内容');
+      return;
+    }
+
+    const result = batchUpdateSeriesEvents(series, events, signups, batchUpdatingForSeriesId, updates, books);
+
+    if (!result.success) {
+      alert(result.reason || '批量更新失败');
+      return;
+    }
+
+    events = result.events;
+    signups = result.signups;
+
+    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
+    const target = {
+      seriesId: batchUpdatingForSeriesId,
+      seriesName: seriesObj?.title || '',
+      updatedEventIds: result.updatedEventIds
+    };
+    const description = generateDescription(OPERATION_TYPES.BATCH_UPDATE_SERIES, target, {
+      updatedCount: result.updatedEventIds.length,
+      limitChanged: result.limitChangedEventIds.length > 0,
+      seriesName: seriesObj?.title || ''
+    });
+    const res = recordOperation(
+      operationLogs,
+      OPERATION_TYPES.BATCH_UPDATE_SERIES,
+      description,
+      target,
+      beforeSnapshot,
+      afterSnapshot,
+      {
+        seriesName: seriesObj?.title || '',
+        updatedCount: result.updatedEventIds.length,
+        limitChangedCount: result.limitChangedEventIds.length,
+        updates,
+        beforeEvents: beforeSnapshot.events,
+        afterEvents: afterSnapshot.events
+      }
+    );
+    operationLogs = res.logs;
+
+    const updatedCount = result.updatedEventIds.length;
+    const limitChanged = result.limitChangedEventIds.length;
+    let msg = `已更新 ${updatedCount} 场活动`;
+    if (limitChanged > 0) {
+      msg += `，其中 ${limitChanged} 场因名额调整已重新计算候补`;
+    }
+    alert(msg);
+
+    cancelBatchUpdate();
+  }
+
+  function toggleBookSelection(bookId) {
+    const currentIds = batchCreateForm.bookIds;
+    if (currentIds.includes(bookId)) {
+      batchCreateForm.bookIds = currentIds.filter((id) => id !== bookId);
+    } else {
+      batchCreateForm.bookIds = [...currentIds, bookId];
+    }
   }
 
   function addEventToSeries() {
@@ -1329,7 +1533,139 @@
                         </div>
                       {/if}
 
-                      {#if addingEventToSeriesId === s.id}
+                      {#if batchCreatingForSeriesId === s.id}
+                        <div class="addEpisodeForm batchForm">
+                          <h4>📚 从模板批量生成活动</h4>
+                          <p class="formHint">选择书单、设置模板参数，一键生成多期活动</p>
+
+                          <div class="batchBookSelector">
+                            <label>选择书单（按顺序生成每期活动）</label>
+                            <div class="bookGrid">
+                              {#each books as book}
+                                <label class="bookCardSelect" class:book-selected={batchCreateForm.bookIds.includes(book.id)}>
+                                  <input type="checkbox" checked={batchCreateForm.bookIds.includes(book.id)} on:change={() => toggleBookSelection(book.id)} />
+                                  <div class="bookCardContent">
+                                    <strong>{book.title}</strong>
+                                    {#if book.author}
+                                      <span class="bookAuthor">· {book.author}</span>
+                                    {/if}
+                                  </div>
+                                </label>
+                              {/each}
+                            </div>
+                            {#if batchCreateForm.bookIds.length > 0}
+                              <p class="selectedCount">已选择 {batchCreateForm.bookIds.length} 本书</p>
+                            {/if}
+                          </div>
+
+                          <div class="formRow">
+                            <div class="formField">
+                              <label>主持人</label>
+                              <input bind:value={batchCreateForm.host} placeholder="如：店员阿檀" />
+                            </div>
+                            <div class="formField">
+                              <label>固定人数上限</label>
+                              <input bind:value={batchCreateForm.limit} type="number" min="1" placeholder="如：10" />
+                            </div>
+                          </div>
+
+                          <div class="formRow">
+                            <div class="formField">
+                              <label>起始日期时间</label>
+                              <input bind:value={batchCreateForm.startDate} type="datetime-local" />
+                            </div>
+                            <div class="formField">
+                              <label>每期间隔（天）</label>
+                              <input bind:value={batchCreateForm.intervalDays} type="number" min="1" placeholder="如：7" />
+                            </div>
+                          </div>
+
+                          <input bind:value={batchCreateForm.question} placeholder="默认报名问题（留空则使用书目的默认问题）" />
+
+                          <div class="formRow">
+                            <div class="formField">
+                              <label>报名状态</label>
+                              <select bind:value={batchCreateForm.status}>
+                                <option value="开放报名">开放报名</option>
+                                <option value="已关闭">已关闭</option>
+                              </select>
+                            </div>
+                            <div class="formField">
+                              <label class="reviewLabel inline">
+                                <input type="checkbox" bind:checked={batchCreateForm.reviewRequired} />
+                                <span>报名需要审核</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          <div class="formActions">
+                            <button type="button" on:click={handleBatchCreate} disabled={batchCreateForm.bookIds.length === 0 || !batchCreateForm.host.trim()}>
+                              生成 {batchCreateForm.bookIds.length} 期活动
+                            </button>
+                            <button type="button" class="ghost" on:click={cancelBatchCreate}>取消</button>
+                          </div>
+                        </div>
+                      {:else if batchUpdatingForSeriesId === s.id}
+                        <div class="addEpisodeForm batchForm">
+                          <h4>⚙️ 批量调整系列活动</h4>
+                          <p class="formHint">修改以下字段将应用到系列下所有活动。<strong>单场手动改过的书目、问题和审核设置不会被覆盖。</strong></p>
+
+                          <div class="formField">
+                            <label>主持人（留空不修改）</label>
+                            <input bind:value={batchUpdateForm.host} placeholder="输入新主持人" />
+                          </div>
+
+                          <div class="formRow">
+                            <div class="formField">
+                              <label>人数上限（留空不修改）</label>
+                              <input bind:value={batchUpdateForm.limit} type="number" min="1" placeholder="输入新的人数上限" />
+                              <p class="fieldHint">调整后有报名的场次将自动重新计算候补</p>
+                            </div>
+                            <div class="formField">
+                              <label>报名状态（不选择不修改）</label>
+                              <select bind:value={batchUpdateForm.status}>
+                                <option value={null}>不修改</option>
+                                <option value="开放报名">开放报名</option>
+                                <option value="已关闭">已关闭</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div class="formField">
+                            <label class="reviewLabel inline">
+                              <input type="checkbox" bind:checked={batchUpdateForm.reviewRequired} />
+                              <span>报名需要审核（仅影响未手动修改过的场次）</span>
+                            </label>
+                          </div>
+
+                          {#if s.events.length > 0}
+                            <div class="batchPreview">
+                              <h5>预览：将影响以下场次</h5>
+                              <div class="previewList">
+                                {#each s.events as ev, idx}
+                                  {@const edited = detectManuallyEditedFields(ev, batchUpdateForm, books)}
+                                  {@const hasProtectedEdits = edited.book || edited.question || edited.reviewRequired}
+                                  <div class="previewRow" class:has-protected={hasProtectedEdits}>
+                                    <span class="episodeBadge small">第{idx + 1}期</span>
+                                    <span class="previewBook">{ev.book}</span>
+                                    <span class="previewMeta">{ev.host} · {ev.time.replace('T', ' ')}</span>
+                                    {#if hasProtectedEdits}
+                                      <span class="protectedBadge" title="该书目、问题或审核设置已手动修改，批量更新时不会被覆盖">🔒 已手动修改</span>
+                                    {/if}
+                                  </div>
+                                {/each}
+                              </div>
+                            </div>
+                          {/if}
+
+                          <div class="formActions">
+                            <button type="button" on:click={handleBatchUpdate}>
+                              应用到 {s.events.length} 场活动
+                            </button>
+                            <button type="button" class="ghost" on:click={cancelBatchUpdate}>取消</button>
+                          </div>
+                        </div>
+                      {:else if addingEventToSeriesId === s.id}
                         <div class="addEpisodeForm">
                           <h4>添加新场次</h4>
                           <div class="bookSelector">
@@ -1372,9 +1708,19 @@
                           </div>
                         </div>
                       {:else}
-                        <button class="ghost addEpisodeBtn" on:click={() => startAddEventToSeries(s.id)}>
-                          <Plus size={14} /> 添加场次
-                        </button>
+                        <div class="seriesActionButtons">
+                          <button class="ghost addEpisodeBtn" on:click={() => startAddEventToSeries(s.id)}>
+                            <Plus size={14} /> 添加场次
+                          </button>
+                          <button class="ghost addEpisodeBtn batchBtn" on:click={() => startBatchCreate(s.id)}>
+                            <Layers size={14} /> 批量生成
+                          </button>
+                          {#if s.events.length > 0}
+                            <button class="ghost addEpisodeBtn batchBtn" on:click={() => startBatchUpdate(s.id)}>
+                              <ListChecks size={14} /> 批量调整
+                            </button>
+                          {/if}
+                        </div>
                       {/if}
                     </div>
                     <div class="bookActions">
@@ -1650,6 +1996,7 @@
                 stats={selectedReaderStats}
                 onBack={() => { selectedReaderId = ''; }}
                 onEditStateChange={(editing) => { _editingReaderDetail = editing; }}
+                resetEditToken={_readerDetailResetToken}
                 onUpdateNote={(note) => {
                   const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
                   const beforeNote = selectedReader?.note || '';
@@ -3051,5 +3398,224 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   transform: none;
 }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } .oplog-panel { width: 100vw; } }
+.seriesActionButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.batchBtn {
+  background: #fff8ee !important;
+  border: 1px solid #e3dacb !important;
+}
+
+.batchBtn:hover {
+  background: #fff3e0 !important;
+  border-color: #c4b99a !important;
+}
+
+.batchForm {
+  margin-top: 12px;
+  padding: 18px !important;
+  background: #fffaf2 !important;
+  border: 1px solid #e3dacb !important;
+}
+
+.batchForm h4 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: #4b4435;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.formHint {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: #8a7f6a;
+  line-height: 1.5;
+}
+
+.formHint strong {
+  color: #7b6b4e;
+}
+
+.batchBookSelector {
+  margin-bottom: 14px;
+}
+
+.batchBookSelector label {
+  display: block;
+  font-size: 13px;
+  color: #6b6459;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.bookGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e1d8ca;
+  border-radius: 8px;
+}
+
+.bookCardSelect {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 2px solid #e1d8ca;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin: 0;
+}
+
+.bookCardSelect:hover {
+  border-color: #c4b99e;
+  background: #f8f5ee;
+}
+
+.bookCardSelect input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.bookCardContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.bookCardContent strong {
+  font-size: 13px;
+  color: #2a2822;
+  font-weight: 600;
+}
+
+.bookAuthor {
+  font-size: 11px;
+  color: #8a7f6a;
+}
+
+.book-selected {
+  border-color: #7b6b4e !important;
+  background: #efe7d8 !important;
+}
+
+.selectedCount {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #7b6b4e;
+  font-weight: 500;
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.formField label {
+  font-size: 12px;
+  color: #6b6459;
+  font-weight: 500;
+}
+
+.fieldHint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #999;
+}
+
+.reviewLabel.inline {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin: 0;
+}
+
+.reviewLabel.inline input {
+  margin: 0;
+}
+
+.batchPreview {
+  margin-top: 14px;
+  padding: 12px;
+  background: #fff;
+  border: 1px dashed #e1d8ca;
+  border-radius: 8px;
+}
+
+.batchPreview h5 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #4b4435;
+}
+
+.previewList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.previewRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #faf7f0;
+  border-radius: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.previewRow.has-protected {
+  background: #fff8ee;
+  border: 1px solid #e3dacb;
+}
+
+.previewBook {
+  font-weight: 600;
+  color: #2a2822;
+}
+
+.previewMeta {
+  color: #8a7f6a;
+}
+
+.protectedBadge {
+  margin-left: auto;
+  font-size: 11px;
+  color: #b36b00;
+  background: #fff3e0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.type-batch-create-events { background: #e8f5e9; color: #2e7d32; }
+.type-batch-update-series { background: #fff3e0; color: #e65100; }
+
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } .oplog-panel { width: 100vw; } .formRow { grid-template-columns: 1fr; } .bookGrid { grid-template-columns: 1fr; } .seriesActionButtons { flex-direction: column; } .seriesActionButtons button { width: 100%; justify-content: center; } }
 </style>

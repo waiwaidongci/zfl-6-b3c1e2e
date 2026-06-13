@@ -12,7 +12,9 @@ export const OPERATION_TYPES = {
   CHECK_IN: 'CHECK_IN',
   CANCEL_SIGNUP: 'CANCEL_SIGNUP',
   CSV_IMPORT: 'CSV_IMPORT',
-  UPDATE_READER_NOTE: 'UPDATE_READER_NOTE'
+  UPDATE_READER_NOTE: 'UPDATE_READER_NOTE',
+  BATCH_CREATE_EVENTS: 'BATCH_CREATE_EVENTS',
+  BATCH_UPDATE_SERIES: 'BATCH_UPDATE_SERIES'
 };
 
 export const OPERATION_LABELS = {
@@ -24,7 +26,9 @@ export const OPERATION_LABELS = {
   [OPERATION_TYPES.CHECK_IN]: '签到',
   [OPERATION_TYPES.CANCEL_SIGNUP]: '取消报名',
   [OPERATION_TYPES.CSV_IMPORT]: 'CSV导入',
-  [OPERATION_TYPES.UPDATE_READER_NOTE]: '修改读者备注'
+  [OPERATION_TYPES.UPDATE_READER_NOTE]: '修改读者备注',
+  [OPERATION_TYPES.BATCH_CREATE_EVENTS]: '批量生成活动',
+  [OPERATION_TYPES.BATCH_UPDATE_SERIES]: '批量更新系列'
 };
 
 function safeParse(str, fallback) {
@@ -198,6 +202,13 @@ function restoreStateFromLog(log, currentState) {
       break;
     case OPERATION_TYPES.UPDATE_READER_NOTE:
       readers = restoreReaders(before, after, readers);
+      break;
+    case OPERATION_TYPES.BATCH_CREATE_EVENTS:
+      events = restoreCreatedEvent(before, after, events);
+      break;
+    case OPERATION_TYPES.BATCH_UPDATE_SERIES:
+      events = restoreEditedEvent(before, after, events);
+      signups = restoreSignupsForEventChange(before, after, events, signups, OPERATION_TYPES.ADJUST_LIMIT);
       break;
     default:
       if (before.events) events = deepClone(before.events);
@@ -506,6 +517,10 @@ export function generateDescription(type, target, metadata) {
       return `CSV导入：新增${metadata?.newSignupCount || 0}条报名，${metadata?.newEventCount || 0}个活动`;
     case OPERATION_TYPES.UPDATE_READER_NOTE:
       return `修改读者备注：${target.readerName || metadata?.name || '未知读者'}`;
+    case OPERATION_TYPES.BATCH_CREATE_EVENTS:
+      return `批量生成：${target.seriesName || ''} 共${metadata?.eventCount || 0}期`;
+    case OPERATION_TYPES.BATCH_UPDATE_SERIES:
+      return `批量更新：${target.seriesName || ''} 更新${metadata?.updatedCount || 0}场${metadata?.limitChanged ? '（含名额调整）' : ''}`;
     default:
       return '未知操作';
   }
