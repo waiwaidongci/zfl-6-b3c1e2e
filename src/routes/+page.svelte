@@ -1,10 +1,11 @@
 <script>
   import { onMount, tick, afterUpdate } from 'svelte';
-  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, ExternalLink, Copy, CheckCircle2, Share2, UserCog, Search, Bookmark } from 'lucide-svelte';
+  import { BookPlus, CalendarPlus, Download, LibraryBig, ListChecks, UserCheck, Users, X, Layers, Plus, Trash2, ChevronRight, Printer, Share2, UserCog, Search, Bookmark, CheckCircle2 } from 'lucide-svelte';
   import SignupPrintView from '$lib/components/SignupPrintView.svelte';
   import ReaderList from '$lib/components/ReaderList.svelte';
   import ReaderDetail from '$lib/components/ReaderDetail.svelte';
   import OpsDashboard from '$lib/components/OpsDashboard.svelte';
+  import PublicLinkModal from '$lib/components/PublicLinkModal.svelte';
   import {
     getSignupsByEvent,
     getPendingSignups,
@@ -15,12 +16,6 @@
     getRegularCheckedInCount,
     sortSignupsForCsv
   } from '$lib/utils/signupUtils.js';
-  import {
-    buildFullPublicUrl,
-    buildFullPublicSeriesUrl,
-    copyToClipboard,
-    getSeriesPublicEventLinks
-  } from '$lib/utils/eventLinkUtils.js';
   import { loadAllData, saveAllData, reloadChangedData } from '$lib/utils/dataStore.js';
   import {
     findReaderByPhone,
@@ -49,8 +44,7 @@
     getCalendarData,
     handleCalendarDayToggle
   } from '$lib/utils/eventActions.js';
-  import { promoteFromWaitlist } from '$lib/utils/storeUtils.js';
-  import { batchCreateEvents, batchUpdateSeriesEvents, detectManuallyEditedFields } from '$lib/utils/seriesStore.js';
+  import { detectManuallyEditedFields } from '$lib/utils/seriesStore.js';
   import {
     isPending as isPendingStatus,
     isRejected as isRejectedStatus,
@@ -75,29 +69,40 @@
     generateDescription
   } from '$lib/utils/operationLog.js';
   import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
+  import { createSeedData, createInitialForms } from '$lib/utils/seedData.js';
+  import {
+    handleCreateBook,
+    handleEditBook,
+    handleDeleteBook,
+    handleCancelEditBook,
+    handleSelectBookForEvent,
+    handleClearBookSelection,
+    handleSelectSeriesBookForEvent,
+    handleClearSeriesBookSelection,
+    handleCreateEvent,
+    handleEditEvent,
+    handleCancelEditEvent,
+    handleCreateSeries,
+    handleEditSeries,
+    handleDeleteSeries,
+    handleCancelEditSeries,
+    handleStartAddEventToSeries,
+    handleCancelAddEventToSeries,
+    handleAddEventToSeries,
+    handleToggleBookSelection,
+    handleStartBatchCreate,
+    handleCancelBatchCreate,
+    handleBatchCreateSubmit,
+    handleStartBatchUpdate,
+    handleCancelBatchUpdate,
+    handleBatchUpdateSubmit,
+    handleStartEditReview,
+    handleCancelEditReview,
+    handleSaveReview
+  } from '$lib/utils/formActions.js';
 
-  const seedBookIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
-  const seedSeriesId = crypto.randomUUID();
-
-  const seedBooks = [
-    { id: seedBookIds[0], title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
-    { id: seedBookIds[1], title: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', question: '是否读完全文？' },
-    { id: seedBookIds[2], title: '浮木', author: '杨本芬', description: '《浮木》是《秋园》的续集，讲述了秋园一家在新中国成立后的生活变迁。', question: '哪个片段最打动你？' },
-    { id: seedBookIds[3], title: '我本芬芳', author: '杨本芬', description: '《我本芬芳》讲述了上世纪六七十年代一个女性的婚姻困境。', question: '你如何看待女主角的选择？' },
-    { id: seedBookIds[4], title: '三体', author: '刘慈欣', description: '《三体》是刘慈欣的科幻代表作，讲述了人类与外星文明的首次接触。', question: '你认为黑暗森林法则成立吗？' },
-    { id: seedBookIds[5], title: '百年孤独', author: '加西亚·马尔克斯', description: '《百年孤独》是魔幻现实主义文学的代表作，讲述了布恩迪亚家族七代人的传奇故事。', question: '你如何理解书中的孤独主题？' }
-  ];
-
-  const seedEvents = [
-    { id: crypto.randomUUID(), book: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', host: '店员阿檀', time: `${iso(3)}T19:30`, limit: 8, question: '你最想讨论哪一章？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 1, _fromTemplate: true, _templateBookId: seedBookIds[0] },
-    { id: crypto.randomUUID(), book: '浮木', author: '杨本芬', description: '《浮木》是《秋园》的续集，讲述了秋园一家在新中国成立后的生活变迁。', host: '店员阿檀', time: `${iso(10)}T19:30`, limit: 8, question: '哪个片段最打动你？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 2, _fromTemplate: true, _templateBookId: seedBookIds[2] },
-    { id: crypto.randomUUID(), book: '我本芬芳', author: '杨本芬', description: '《我本芬芳》讲述了上世纪六七十年代一个女性的婚姻困境。', host: '店员阿檀', time: `${iso(17)}T19:30`, limit: 8, question: '你如何看待女主角的选择？', status: '开放报名', reviewRequired: false, seriesId: seedSeriesId, seriesIndex: 3, _fromTemplate: true, _templateBookId: seedBookIds[3] },
-    { id: crypto.randomUUID(), book: '索拉里斯星', author: '斯坦尼斯瓦夫·莱姆', description: '《索拉里斯星》是波兰科幻作家莱姆的代表作，探讨了人类与外星文明沟通的困境。', host: '老周', time: `${iso(5)}T20:00`, limit: 12, question: '是否读完全文？', status: '开放报名', reviewRequired: false }
-  ];
-
-  const seedSeries = [
-    { id: seedSeriesId, title: '杨本芬女性三部曲', description: '连续三周共读杨本芬笔下的女性故事，感受大时代背景下普通人的命运浮沉。', createdAt: new Date().toLocaleString() }
-  ];
+  const { seedBooks, seedEvents, seedSeries } = createSeedData();
+  const initialForms = createInitialForms();
 
   let books = seedBooks;
   let events = seedEvents;
@@ -110,15 +115,15 @@
   let listViewTab = '全部活动';
   let selectedSeriesId = '';
   let selectedBookId = '';
-  let eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
-  let bookForm = { title: '', author: '', description: '', question: '' };
+  let eventForm = initialForms.eventForm;
+  let bookForm = initialForms.bookForm;
   let editingBookId = '';
   let editingEventId = '';
   let editingEventPrevLimit = 0;
   let editingEventSeriesId = undefined;
   let editingEventSeriesIndex = undefined;
   let mySignupIds = [];
-  let signupForm = { name: '', phone: '', answer: '' };
+  let signupForm = initialForms.signupForm;
   let matchedReaderInfo = null;
   let hydrated = false;
   let viewMode = '列表';
@@ -126,41 +131,20 @@
   let calMonth = new Date().getMonth();
   let activeDate = '';
 
-  let seriesForm = { title: '', description: '' };
+  let seriesForm = initialForms.seriesForm;
   let editingSeriesId = '';
   let addingEventToSeriesId = '';
-  let seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+  let seriesEventForm = initialForms.seriesEventForm;
   let selectedSeriesBookId = '';
   let batchCreatingForSeriesId = '';
   let batchUpdatingForSeriesId = '';
-  let batchCreateForm = {
-    bookIds: [],
-    host: '',
-    limit: 10,
-    question: '',
-    startDate: `${iso(7)}T19:30`,
-    intervalDays: 7,
-    status: '开放报名',
-    reviewRequired: false
-  };
-  let batchUpdateForm = {
-    host: '',
-    limit: null,
-    status: null,
-    reviewRequired: null
-  };
+  let batchCreateForm = initialForms.batchCreateForm;
+  let batchUpdateForm = initialForms.batchUpdateForm;
   let rejectingSignupId = '';
   let rejectionReason = '';
 
   let editingReview = false;
-  let reviewForm = {
-    note: '',
-    onSiteCount: '',
-    walkInCount: '',
-    absenceReasons: '',
-    followUpReaders: '',
-    recommendedBooks: ''
-  };
+  let reviewForm = initialForms.reviewForm;
 
   let importCsvText = '';
   let importPreview = null;
@@ -176,7 +160,6 @@
   let publicLinkModalType = 'single';
   let publicLinkTargetEventId = '';
   let publicLinkTargetSeriesId = '';
-  let copiedLinkId = '';
 
   let selectedReaderId = '';
   let readerSearchKeyword = '';
@@ -449,456 +432,286 @@
   }
 
   function createSeries() {
-    if (!seriesForm.title.trim()) return;
-    if (editingSeriesId) {
-      series = series.map((s) => s.id === editingSeriesId ? { ...s, ...seriesForm } : s);
-      editingSeriesId = '';
-    } else {
-      const s = { id: crypto.randomUUID(), ...seriesForm, createdAt: new Date().toLocaleString() };
-      series = [s, ...series];
+    const res = handleCreateSeries({ series, seriesForm, editingSeriesId });
+    if (res && res.success) {
+      series = res.series;
+      seriesForm = res.seriesForm;
+      editingSeriesId = res.editingSeriesId;
     }
-    seriesForm = { title: '', description: '' };
   }
 
   function editSeries(s) {
-    editingSeriesId = s.id;
-    seriesForm = { title: s.title, description: s.description || '' };
+    const res = handleEditSeries(s);
+    editingSeriesId = res.editingSeriesId;
+    seriesForm = res.seriesForm;
   }
 
   function deleteSeries(seriesId) {
-    if (!confirm('确定要删除此系列吗？系列下的活动将变为单场活动。')) return;
-    events = events.map((e) => e.seriesId === seriesId ? { ...e, seriesId: undefined, seriesIndex: undefined } : e);
-    series = series.filter((s) => s.id !== seriesId);
-    if (selectedSeriesId === seriesId) selectedSeriesId = '';
+    const res = handleDeleteSeries({ series, events, seriesId, selectedSeriesId });
+    if (res && res.success) {
+      events = res.events;
+      series = res.series;
+      selectedSeriesId = res.selectedSeriesId;
+    }
   }
 
   function cancelEditSeries() {
-    editingSeriesId = '';
-    seriesForm = { title: '', description: '' };
+    const res = handleCancelEditSeries();
+    editingSeriesId = res.editingSeriesId;
+    seriesForm = res.seriesForm;
   }
 
   function startAddEventToSeries(seriesId) {
-    addingEventToSeriesId = seriesId;
-    selectedSeriesBookId = '';
-    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+    const res = handleStartAddEventToSeries(seriesId);
+    addingEventToSeriesId = res.addingEventToSeriesId;
+    selectedSeriesBookId = res.selectedSeriesBookId;
+    seriesEventForm = res.seriesEventForm;
   }
 
   function cancelAddEventToSeries() {
-    addingEventToSeriesId = '';
-    selectedSeriesBookId = '';
-    seriesEventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+    const res = handleCancelAddEventToSeries();
+    addingEventToSeriesId = res.addingEventToSeriesId;
+    selectedSeriesBookId = res.selectedSeriesBookId;
+    seriesEventForm = res.seriesEventForm;
   }
 
   function startBatchCreate(seriesId) {
-    batchCreatingForSeriesId = seriesId;
-    batchUpdatingForSeriesId = '';
-    addingEventToSeriesId = '';
-    batchCreateForm = {
-      bookIds: [],
-      host: '',
-      limit: 10,
-      question: '',
-      startDate: `${iso(7)}T19:30`,
-      intervalDays: 7,
-      status: '开放报名',
-      reviewRequired: false
-    };
+    const res = handleStartBatchCreate(seriesId);
+    batchCreatingForSeriesId = res.batchCreatingForSeriesId;
+    batchUpdatingForSeriesId = res.batchUpdatingForSeriesId;
+    addingEventToSeriesId = res.addingEventToSeriesId;
+    batchCreateForm = res.batchCreateForm;
   }
 
   function cancelBatchCreate() {
-    batchCreatingForSeriesId = '';
-    batchCreateForm = {
-      bookIds: [],
-      host: '',
-      limit: 10,
-      question: '',
-      startDate: `${iso(7)}T19:30`,
-      intervalDays: 7,
-      status: '开放报名',
-      reviewRequired: false
-    };
+    const res = handleCancelBatchCreate();
+    batchCreatingForSeriesId = res.batchCreatingForSeriesId;
+    batchCreateForm = res.batchCreateForm;
   }
 
   function handleBatchCreate() {
     if (!batchCreatingForSeriesId) return;
 
-    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
-    const seriesObj = series.find((s) => s.id === batchCreatingForSeriesId);
-
-    const result = batchCreateEvents(series, events, batchCreatingForSeriesId, batchCreateForm, books);
-
-    if (!result.success) {
-      alert(result.reason || '批量生成失败');
-      return;
-    }
-
-    events = result.events;
-
-    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
-    const target = {
-      seriesId: batchCreatingForSeriesId,
-      seriesName: seriesObj?.title || '',
-      newEventIds: result.createdEvents.map((e) => e.id)
-    };
-    const description = generateDescription(OPERATION_TYPES.BATCH_CREATE_EVENTS, target, {
-      eventCount: result.createdEvents.length,
-      seriesName: seriesObj?.title || ''
-    });
-    const res = recordOperation(
+    const ctx = {
+      events,
+      signups,
+      readers,
+      mySignupIds,
+      series,
       operationLogs,
-      OPERATION_TYPES.BATCH_CREATE_EVENTS,
-      description,
-      target,
-      beforeSnapshot,
-      afterSnapshot,
-      {
-        seriesName: seriesObj?.title || '',
-        eventCount: result.createdEvents.length,
-        createdEvents: result.createdEvents,
-        batchConfig: { ...batchCreateForm }
-      }
-    );
-    operationLogs = res.logs;
+      batchCreateForm,
+      books,
+      batchCreatingForSeriesId
+    };
 
-    cancelBatchCreate();
+    const res = handleBatchCreateSubmit(ctx);
+    if (!res || !res.success) return;
+
+    events = res.events;
+    operationLogs = res.operationLogs;
+    batchCreatingForSeriesId = res.batchCreatingForSeriesId;
+    batchCreateForm = res.batchCreateForm;
   }
 
   function startBatchUpdate(seriesId) {
-    batchUpdatingForSeriesId = seriesId;
-    batchCreatingForSeriesId = '';
-    addingEventToSeriesId = '';
-    batchUpdateForm = {
-      host: '',
-      limit: null,
-      status: null,
-      reviewRequired: null
-    };
+    const res = handleStartBatchUpdate(seriesId);
+    batchUpdatingForSeriesId = res.batchUpdatingForSeriesId;
+    batchCreatingForSeriesId = res.batchCreatingForSeriesId;
+    addingEventToSeriesId = res.addingEventToSeriesId;
+    batchUpdateForm = res.batchUpdateForm;
   }
 
   function cancelBatchUpdate() {
-    batchUpdatingForSeriesId = '';
-    batchUpdateForm = {
-      host: '',
-      limit: null,
-      status: null,
-      reviewRequired: null
-    };
+    const res = handleCancelBatchUpdate();
+    batchUpdatingForSeriesId = res.batchUpdatingForSeriesId;
+    batchUpdateForm = res.batchUpdateForm;
   }
 
   function handleBatchUpdate() {
     if (!batchUpdatingForSeriesId) return;
 
-    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
-    const seriesObj = series.find((s) => s.id === batchUpdatingForSeriesId);
-
-    const updates = {};
-    if (batchUpdateForm.host.trim()) updates.host = batchUpdateForm.host.trim();
-    if (batchUpdateForm.limit !== null && batchUpdateForm.limit !== undefined) updates.limit = batchUpdateForm.limit;
-    if (batchUpdateForm.status !== null) updates.status = batchUpdateForm.status;
-    if (batchUpdateForm.reviewRequired !== null) updates.reviewRequired = batchUpdateForm.reviewRequired;
-
-    if (Object.keys(updates).length === 0) {
-      alert('请至少选择一项要更新的内容');
-      return;
-    }
-
-    const result = batchUpdateSeriesEvents(series, events, signups, batchUpdatingForSeriesId, updates, books);
-
-    if (!result.success) {
-      alert(result.reason || '批量更新失败');
-      return;
-    }
-
-    events = result.events;
-    signups = result.signups;
-
-    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
-    const target = {
-      seriesId: batchUpdatingForSeriesId,
-      seriesName: seriesObj?.title || '',
-      updatedEventIds: result.updatedEventIds
-    };
-    const description = generateDescription(OPERATION_TYPES.BATCH_UPDATE_SERIES, target, {
-      updatedCount: result.updatedEventIds.length,
-      limitChanged: result.limitChangedEventIds.length > 0,
-      seriesName: seriesObj?.title || ''
-    });
-    const res = recordOperation(
+    const ctx = {
+      events,
+      signups,
+      readers,
+      mySignupIds,
+      series,
       operationLogs,
-      OPERATION_TYPES.BATCH_UPDATE_SERIES,
-      description,
-      target,
-      beforeSnapshot,
-      afterSnapshot,
-      {
-        seriesName: seriesObj?.title || '',
-        updatedCount: result.updatedEventIds.length,
-        limitChangedCount: result.limitChangedEventIds.length,
-        updates,
-        beforeEvents: beforeSnapshot.events,
-        afterEvents: afterSnapshot.events
-      }
-    );
-    operationLogs = res.logs;
+      batchUpdateForm,
+      books,
+      batchUpdatingForSeriesId
+    };
 
-    const updatedCount = result.updatedEventIds.length;
-    const limitChanged = result.limitChangedEventIds.length;
-    let msg = `已更新 ${updatedCount} 场活动`;
-    if (limitChanged > 0) {
-      msg += `，其中 ${limitChanged} 场因名额调整已重新计算候补`;
-    }
-    alert(msg);
+    const res = handleBatchUpdateSubmit(ctx);
+    if (!res || !res.success) return;
 
-    cancelBatchUpdate();
+    events = res.events;
+    signups = res.signups;
+    operationLogs = res.operationLogs;
+    batchUpdatingForSeriesId = res.batchUpdatingForSeriesId;
+    batchUpdateForm = res.batchUpdateForm;
   }
 
   function toggleBookSelection(bookId) {
-    const currentIds = batchCreateForm.bookIds;
-    if (currentIds.includes(bookId)) {
-      batchCreateForm.bookIds = currentIds.filter((id) => id !== bookId);
-    } else {
-      batchCreateForm.bookIds = [...currentIds, bookId];
-    }
+    const res = handleToggleBookSelection({ batchCreateForm, bookId });
+    batchCreateForm = res.batchCreateForm;
   }
 
   function addEventToSeries() {
     if (!seriesEventForm.book.trim() || !seriesEventForm.host.trim() || !addingEventToSeriesId) return;
-    const sEvents = getSeriesEvents(addingEventToSeriesId);
-    const event = {
-      id: crypto.randomUUID(),
-      ...seriesEventForm,
-      limit: Number(seriesEventForm.limit || 0),
-      seriesId: addingEventToSeriesId,
-      seriesIndex: sEvents.length + 1
-    };
-    events = [event, ...events];
-    cancelAddEventToSeries();
+    const res = handleAddEventToSeries({ series, events, addingEventToSeriesId, seriesEventForm });
+    if (res && res.success) {
+      events = res.events;
+      addingEventToSeriesId = res.addingEventToSeriesId;
+      selectedSeriesBookId = res.selectedSeriesBookId;
+      seriesEventForm = res.seriesEventForm;
+    }
   }
 
   function selectSeriesBookForEvent(bookId) {
-    selectedSeriesBookId = bookId;
+    const res = handleSelectSeriesBookForEvent({ books, selectedSeriesBookId, bookId });
+    selectedSeriesBookId = res.selectedSeriesBookId;
+    seriesEventForm = res.seriesEventForm;
   }
 
   function clearSeriesBookSelection() {
-    selectedSeriesBookId = '';
-    seriesEventForm.book = '';
-    seriesEventForm.author = '';
-    seriesEventForm.description = '';
-    seriesEventForm.question = '';
+    const res = handleClearSeriesBookSelection();
+    selectedSeriesBookId = res.selectedSeriesBookId;
+    seriesEventForm = res.seriesEventForm;
   }
 
   function selectBookForEvent(bookId) {
-    selectedBookId = bookId;
+    const res = handleSelectBookForEvent({ books, selectedBookId, bookId });
+    selectedBookId = res.selectedBookId;
+    eventForm = res.eventForm;
   }
 
   function clearBookSelection() {
-    selectedBookId = '';
-    eventForm.book = '';
-    eventForm.author = '';
-    eventForm.description = '';
-    eventForm.question = '';
+    const res = handleClearBookSelection();
+    selectedBookId = res.selectedBookId;
+    eventForm = res.eventForm;
   }
 
   function createEvent() {
     if (!eventForm.book.trim() || !eventForm.host.trim()) return;
 
-    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
+    const ctx = {
+      events,
+      signups,
+      readers,
+      mySignupIds,
+      series,
+      operationLogs,
+      eventForm,
+      editingEventId,
+      editingEventPrevLimit,
+      editingEventSeriesId,
+      editingEventSeriesIndex
+    };
 
-    if (editingEventId) {
-      const newLimit = Number(eventForm.limit || 0);
-      const eventId = editingEventId;
-      const prevLimit = editingEventPrevLimit;
-      const beforeEvent = events.find((e) => e.id === eventId);
-      const updatedEvents = events.map((e) => e.id === eventId ? { ...eventForm, id: eventId, limit: newLimit, seriesId: editingEventSeriesId, seriesIndex: editingEventSeriesIndex } : e);
-      events = updatedEvents;
-      let updatedSignups = signups;
-      if (newLimit > prevLimit) {
-        updatedSignups = promoteFromWaitlist(updatedEvents, signups, eventId);
-        signups = updatedSignups;
-      }
+    const res = handleCreateEvent(ctx);
+    if (!res || !res.success) return;
 
-      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
-
-      if (prevLimit !== newLimit) {
-        const target = { eventId, eventName: beforeEvent?.book || eventForm.book, limitChanged: true };
-        const description = generateDescription(OPERATION_TYPES.ADJUST_LIMIT, target, { beforeLimit: prevLimit, afterLimit: newLimit, book: eventForm.book });
-        const res = recordOperation(
-          operationLogs,
-          OPERATION_TYPES.ADJUST_LIMIT,
-          description,
-          target,
-          beforeSnapshot,
-          afterSnapshot,
-          { beforeLimit: prevLimit, afterLimit: newLimit, book: eventForm.book, beforeEvent: beforeSnapshot.events.find((e) => e.id === eventId) }
-        );
-        operationLogs = res.logs;
-
-        if (JSON.stringify(beforeEvent) !== JSON.stringify({ ...eventForm, id: eventId, limit: newLimit, seriesId: editingEventSeriesId, seriesIndex: editingEventSeriesIndex })) {
-          const editTarget = { eventId, eventName: beforeEvent?.book || eventForm.book };
-          const editDesc = generateDescription(OPERATION_TYPES.EDIT_EVENT, editTarget, { book: eventForm.book });
-          const editRes = recordOperation(
-            operationLogs,
-            OPERATION_TYPES.EDIT_EVENT,
-            editDesc,
-            editTarget,
-            beforeSnapshot,
-            afterSnapshot,
-            { book: eventForm.book, beforeEvent }
-          );
-          operationLogs = editRes.logs;
-        }
-      } else {
-        const target = { eventId, eventName: beforeEvent?.book || eventForm.book };
-        const description = generateDescription(OPERATION_TYPES.EDIT_EVENT, target, { book: eventForm.book });
-        const res = recordOperation(
-          operationLogs,
-          OPERATION_TYPES.EDIT_EVENT,
-          description,
-          target,
-          beforeSnapshot,
-          afterSnapshot,
-          { book: eventForm.book, beforeEvent }
-        );
-        operationLogs = res.logs;
-      }
-
-      editingEventId = '';
-      editingEventPrevLimit = 0;
-      editingEventSeriesId = undefined;
-      editingEventSeriesIndex = undefined;
-    } else {
-      const event = { id: crypto.randomUUID(), ...eventForm, limit: Number(eventForm.limit || 0) };
-      events = [event, ...events];
-      selectedId = event.id;
-
-      const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
-      const target = { eventId: event.id, eventName: event.book };
-      const description = generateDescription(OPERATION_TYPES.CREATE_EVENT, target, { book: event.book });
-      const res = recordOperation(
-        operationLogs,
-        OPERATION_TYPES.CREATE_EVENT,
-        description,
-        target,
-        beforeSnapshot,
-        afterSnapshot,
-        { book: event.book, host: event.host, limit: event.limit }
-      );
-      operationLogs = res.logs;
-    }
-    clearBookSelection();
-    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+    events = res.events;
+    signups = res.signups;
+    operationLogs = res.operationLogs;
+    editingEventId = res.editingEventId;
+    editingEventPrevLimit = res.editingEventPrevLimit;
+    editingEventSeriesId = res.editingEventSeriesId;
+    editingEventSeriesIndex = res.editingEventSeriesIndex;
+    selectedBookId = res.selectedBookId;
+    eventForm = res.eventForm;
+    if (res.newSelectedId) selectedId = res.newSelectedId;
   }
 
   function editEvent(event) {
-    editingEventId = event.id;
-    editingEventPrevLimit = Number(event.limit);
-    editingEventSeriesId = event.seriesId;
-    editingEventSeriesIndex = event.seriesIndex;
-    selectedBookId = '';
-    eventForm = { book: event.book, author: event.author, description: event.description, host: event.host, time: event.time, limit: event.limit, question: event.question, status: event.status, reviewRequired: event.reviewRequired || false };
+    const res = handleEditEvent(event);
+    editingEventId = res.editingEventId;
+    editingEventPrevLimit = res.editingEventPrevLimit;
+    editingEventSeriesId = res.editingEventSeriesId;
+    editingEventSeriesIndex = res.editingEventSeriesIndex;
+    selectedBookId = res.selectedBookId;
+    eventForm = res.eventForm;
   }
 
   function cancelEditEvent() {
-    editingEventId = '';
-    editingEventPrevLimit = 0;
-    editingEventSeriesId = undefined;
-    editingEventSeriesIndex = undefined;
-    clearBookSelection();
-    eventForm = { book: '', author: '', description: '', host: '', time: `${iso(7)}T19:30`, limit: 10, question: '', status: '开放报名', reviewRequired: false };
+    const res = handleCancelEditEvent();
+    editingEventId = res.editingEventId;
+    editingEventPrevLimit = res.editingEventPrevLimit;
+    editingEventSeriesId = res.editingEventSeriesId;
+    editingEventSeriesIndex = res.editingEventSeriesIndex;
+    selectedBookId = res.selectedBookId;
+    eventForm = res.eventForm;
   }
 
   function startEditReview() {
     if (!selectedEvent) return;
-    const review = selectedEvent.review || {};
-    reviewForm = {
-      note: review.note || '',
-      onSiteCount: review.onSiteCount !== null && review.onSiteCount !== undefined ? String(review.onSiteCount) : '',
-      walkInCount: review.walkInCount !== null && review.walkInCount !== undefined ? String(review.walkInCount) : '',
-      absenceReasons: review.absenceReasons || '',
-      followUpReaders: review.followUpReaders || '',
-      recommendedBooks: review.recommendedBooks || ''
-    };
-    editingReview = true;
+    const res = handleStartEditReview(selectedEvent);
+    if (res) {
+      reviewForm = res.reviewForm;
+      editingReview = res.editingReview;
+    }
   }
 
   function cancelEditReview() {
-    editingReview = false;
-    reviewForm = {
-      note: '',
-      onSiteCount: '',
-      walkInCount: '',
-      absenceReasons: '',
-      followUpReaders: '',
-      recommendedBooks: ''
-    };
+    const res = handleCancelEditReview();
+    editingReview = res.editingReview;
+    reviewForm = res.reviewForm;
   }
 
   function saveReview() {
     if (!selectedEvent) return;
 
-    const beforeSnapshot = buildBeforeStateSnapshot({ events, signups, readers, mySignupIds, series });
-    const beforeReview = selectedEvent.review ? { ...selectedEvent.review } : null;
-    const onSiteCountText = String(reviewForm.onSiteCount ?? '').trim();
-    const walkInCountText = String(reviewForm.walkInCount ?? '').trim();
-
-    const newReview = {
-      note: reviewForm.note.trim(),
-      onSiteCount: onSiteCountText !== '' ? Number(onSiteCountText) : null,
-      walkInCount: walkInCountText !== '' ? Number(walkInCountText) : null,
-      absenceReasons: reviewForm.absenceReasons.trim(),
-      followUpReaders: reviewForm.followUpReaders.trim(),
-      recommendedBooks: reviewForm.recommendedBooks.trim(),
-      updatedAt: new Date().toLocaleString()
+    const ctx = {
+      events,
+      signups,
+      readers,
+      mySignupIds,
+      series,
+      operationLogs,
+      reviewForm,
+      editingReview,
+      selectedEvent
     };
 
-    events = events.map((e) =>
-      e.id === selectedEvent.id ? { ...e, review: newReview } : e
-    );
+    const res = handleSaveReview(ctx);
+    if (!res || !res.success) return;
 
-    const afterSnapshot = buildAfterStateSnapshot(beforeSnapshot, { events, signups, readers, mySignupIds, series });
-    const target = { eventId: selectedEvent.id, eventName: selectedEvent.book };
-    const description = generateDescription(OPERATION_TYPES.UPDATE_EVENT_REVIEW, target, { book: selectedEvent.book });
-    const res = recordOperation(
-      operationLogs,
-      OPERATION_TYPES.UPDATE_EVENT_REVIEW,
-      description,
-      target,
-      beforeSnapshot,
-      afterSnapshot,
-      { book: selectedEvent.book, beforeReview, afterReview: newReview }
-    );
-    operationLogs = res.logs;
-
-    editingReview = false;
+    events = res.events;
+    operationLogs = res.operationLogs;
+    editingReview = res.editingReview;
   }
 
   function createBook() {
     if (!bookForm.title.trim() || !bookForm.author.trim()) return;
-    if (editingBookId) {
-      books = books.map((b) => b.id === editingBookId ? { ...bookForm, id: editingBookId } : b);
-      editingBookId = '';
-    } else {
-      const book = { id: crypto.randomUUID(), ...bookForm };
-      books = [book, ...books];
+    const res = handleCreateBook({ books, bookForm, editingBookId });
+    if (res && res.success) {
+      books = res.books;
+      bookForm = res.bookForm;
+      editingBookId = res.editingBookId;
     }
-    bookForm = { title: '', author: '', description: '', question: '' };
   }
 
   function editBook(book) {
-    bookForm = { title: book.title, author: book.author, description: book.description, question: book.question };
-    editingBookId = book.id;
+    const res = handleEditBook(book);
+    bookForm = res.bookForm;
+    editingBookId = res.editingBookId;
   }
 
   function deleteBook(id) {
-    books = books.filter((b) => b.id !== id);
-    if (selectedBookId === id) {
-      clearBookSelection();
+    const res = handleDeleteBook({ books, id, selectedBookId });
+    books = res.books;
+    selectedBookId = res.selectedBookId;
+    if (selectedBookId === '') {
+      const cleared = handleClearBookSelection();
+      eventForm = cleared.eventForm;
     }
   }
 
   function cancelEditBook() {
-    bookForm = { title: '', author: '', description: '', question: '' };
-    editingBookId = '';
+    const res = handleCancelEditBook();
+    bookForm = res.bookForm;
+    editingBookId = res.editingBookId;
   }
 
   function dateKey(day) { return `${calYear}-${padFn(calMonth + 1)}-${padFn(day)}`; }
@@ -1206,31 +1019,8 @@
 
   function closePublicLinkModal() {
     showPublicLinkModal = false;
-    copiedLinkId = '';
     publicLinkTargetEventId = '';
     publicLinkTargetSeriesId = '';
-  }
-
-  function handleModalOverlayClick(event) {
-    if (event.target === event.currentTarget) {
-      closePublicLinkModal();
-    }
-  }
-
-  async function handleCopyLink(text, id) {
-    try {
-      await copyToClipboard(text);
-      copiedLinkId = id;
-      setTimeout(() => { copiedLinkId = ''; }, 2000);
-    } catch (e) {
-      alert('复制失败，请手动复制');
-    }
-  }
-
-  function previewPublicPage(url) {
-    if (typeof window !== 'undefined') {
-      window.open(url, '_blank');
-    }
   }
 
   function handleUndoOperation(logId) {
@@ -2552,118 +2342,17 @@
     {/if}
   </section>
 
-  {#if showPublicLinkModal}
-    <div class="modalOverlay" role="dialog" aria-modal="true" aria-label="活动公开报名链接" tabindex="0" on:click={handleModalOverlayClick} on:keydown={(e) => { if (e.key === 'Escape') closePublicLinkModal(); }}>
-      <div class="modalContent" role="document">
-        <div class="modalHeader">
-          <h2><Share2 size={18} />活动公开报名链接</h2>
-          <button class="modalClose" on:click={closePublicLinkModal}><X size={18} /></button>
-        </div>
-        <div class="modalBody">
-          {#if publicLinkModalType === 'single'}
-            {@const targetEvent = events.find((e) => e.id === publicLinkTargetEventId)}
-            {#if targetEvent}
-              {@const singleUrl = buildFullPublicUrl(targetEvent.id)}
-              {@const targetSeries = getSeriesOfEvent(targetEvent.id)}
-              <div class="linkCard">
-                <div class="linkCardHead">
-                  <strong>{targetEvent.book}</strong>
-                  {#if targetSeries}
-                    <span class="seriesTag">📚 {targetSeries.title} · 第{getEventIndexInSeries(targetEvent.id)}期</span>
-                  {/if}
-                  <span>{targetEvent.host} · {targetEvent.time.replace('T', ' ')}</span>
-                  <span class="status-badge {targetEvent.status === '开放报名' ? 'regular' : 'waitlist'}">{targetEvent.status}</span>
-                </div>
-                <div class="linkRow">
-                  <input readonly value={singleUrl} />
-                  <button class="ghost copyBtn" on:click={() => handleCopyLink(singleUrl, 'single')}>
-                    {#if copiedLinkId === 'single'}
-                      <CheckCircle2 size={16} /> 已复制
-                    {:else}
-                      <Copy size={16} /> 复制
-                    {/if}
-                  </button>
-                  <button class="ghost previewBtn" on:click={() => previewPublicPage(singleUrl)}>
-                    <ExternalLink size={16} /> 预览
-                  </button>
-                </div>
-              </div>
-            {/if}
-          {:else if publicLinkModalType === 'series'}
-            {@const targetSeries = series.find((s) => s.id === publicLinkTargetSeriesId)}
-            {@const seriesLinks = targetSeries ? getSeriesPublicEventLinks(events, targetSeries.id) : []}
-            {#if targetSeries}
-              {@const seriesPageUrl = buildFullPublicSeriesUrl(targetSeries.id)}
-              <div class="linkCard">
-                <div class="linkCardHead">
-                  <Layers size={16} />
-                  <strong>{targetSeries.title}</strong>
-                  <span>共 {seriesLinks.length} 期</span>
-                  {#if targetSeries.description}
-                    <p class="seriesLinkDesc">{targetSeries.description}</p>
-                  {/if}
-                </div>
-                <div class="seriesPageLinkSection">
-                  <div class="seriesPageLinkLabel">
-                    <Bookmark size={14} /> 系列总览页（推荐分享）
-                  </div>
-                  <div class="linkRow">
-                    <input readonly value={seriesPageUrl} />
-                    <button class="ghost copyBtn" on:click={() => handleCopyLink(seriesPageUrl, `series-${targetSeries.id}`)}>
-                      {#if copiedLinkId === `series-${targetSeries.id}`}
-                        <CheckCircle2 size={16} /> 已复制
-                      {:else}
-                        <Copy size={16} /> 复制
-                      {/if}
-                    </button>
-                    <button class="ghost previewBtn" on:click={() => previewPublicPage(seriesPageUrl)}>
-                      <ExternalLink size={16} /> 预览
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div class="seriesSectionDivider">
-                <span>单场报名链接</span>
-              </div>
-              {#if seriesLinks.length === 0}
-                <p class="empty empty-small">该系列下暂无活动</p>
-              {:else}
-                {#each seriesLinks as linkItem, idx}
-                  {@const ev = events.find((e) => e.id === linkItem.eventId)}
-                  <div class="linkCard linkCard-series">
-                    <div class="linkCardHead">
-                      <span class="episodeBadge small">第{idx + 1}期</span>
-                      <strong>{linkItem.book}</strong>
-                      <span>{ev?.host} · {linkItem.time.replace('T', ' ')}</span>
-                      {#if ev}
-                        <span class="status-badge {ev.status === '开放报名' ? 'regular' : 'waitlist'}">{ev.status}</span>
-                      {/if}
-                    </div>
-                    <div class="linkRow">
-                      <input readonly value={buildFullPublicUrl(linkItem.eventId)} />
-                      <button class="ghost copyBtn" on:click={() => handleCopyLink(buildFullPublicUrl(linkItem.eventId), linkItem.eventId)}>
-                        {#if copiedLinkId === linkItem.eventId}
-                          <CheckCircle2 size={16} /> 已复制
-                        {:else}
-                          <Copy size={16} /> 复制
-                        {/if}
-                      </button>
-                      <button class="ghost previewBtn" on:click={() => previewPublicPage(buildFullPublicUrl(linkItem.eventId))}>
-                        <ExternalLink size={16} /> 预览
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-              {/if}
-            {/if}
-          {/if}
-        </div>
-        <div class="modalFooter">
-          <button on:click={closePublicLinkModal}>关闭</button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <PublicLinkModal
+    show={showPublicLinkModal}
+    type={publicLinkModalType}
+    eventId={publicLinkTargetEventId}
+    seriesId={publicLinkTargetSeriesId}
+    events={events}
+    series={series}
+    getSeriesOfEvent={getSeriesOfEvent}
+    getEventIndexInSeries={getEventIndexInSeries}
+    on:close={closePublicLinkModal}
+  />
 
   {#if showOperationLogPanel && mode === '管理端'}
     <div class="oplog-overlay" on:click|self={toggleOperationLogPanel}>
@@ -3063,190 +2752,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   padding: 6px 10px;
 }
 
-.modalOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(43, 43, 37, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 20px;
-}
-
-.modalContent {
-  background: #fff;
-  border-radius: 10px;
-  width: 100%;
-  max-width: 640px;
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-}
-
-.modalHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 18px 22px;
-  border-bottom: 1px solid #e1d8ca;
-  background: #f8f5ee;
-  border-radius: 10px 10px 0 0;
-}
-
-.modalHeader h2 {
-  margin: 0;
-  font-size: 17px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.modalClose {
-  padding: 6px 10px;
-  background: transparent;
-  border: 0;
-  color: #686258;
-  cursor: pointer;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-}
-
-.modalClose:hover {
-  background: #eee8dc;
-  color: #2a2822;
-}
-
-.modalBody {
-  padding: 20px 22px;
-}
-
-.modalFooter {
-  padding: 14px 22px;
-  border-top: 1px solid #e1d8ca;
-  background: #faf7f0;
-  border-radius: 0 0 10px 10px;
-}
-
-.modalFooter button {
-  width: 100%;
-}
-
-.linkCard {
-  background: #fffaf2;
-  border: 1px solid #e3dacb;
-  border-radius: 8px;
-  padding: 14px;
-  margin-bottom: 12px;
-}
-
-.linkCard-series {
-  background: #fff;
-}
-
-.linkCard:last-child {
-  margin-bottom: 0;
-}
-
-.linkCardHead {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.linkCardHead strong {
-  font-size: 15px;
-  color: #2a2822;
-}
-
-.linkCardHead span {
-  font-size: 13px;
-  color: #6b6459;
-}
-
-.linkCardHead .seriesTag {
-  display: inline-block;
-  font-size: 11px;
-  color: #7b6b4e;
-  background: #efe7d8;
-  padding: 2px 8px;
-  border-radius: 8px;
-  width: fit-content;
-}
-
-.seriesLinkDesc {
-  font-size: 13px;
-  color: #4a4439;
-  margin: 4px 0 0;
-  line-height: 1.5;
-}
-
-.linkRow {
-  display: flex;
-  gap: 8px;
-}
-
-.linkRow input {
-  flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  padding: 10px 12px;
-  background: #fff;
-}
-
-.copyBtn, .previewBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 14px;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-
 .opsSection { display: grid; gap: 16px; }
-
-.seriesPageLinkSection {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed #e3dacb;
-}
-
-.seriesPageLinkLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #7b6b4e;
-  background: #efe7d8;
-  padding: 3px 10px;
-  border-radius: 10px;
-  margin-bottom: 10px;
-}
-
-.seriesSectionDivider {
-  display: flex;
-  align-items: center;
-  margin: 16px 0 12px;
-  text-align: center;
-}
-
-.seriesSectionDivider::before,
-.seriesSectionDivider::after {
-  content: '';
-  flex: 1;
-  border-bottom: 1px solid #e3dacb;
-}
-
-.seriesSectionDivider span {
-  padding: 0 14px;
-  font-size: 12px;
-  color: #8a7f6a;
-  font-weight: 500;
-  background: #fff;
-}
 
 .log-btn {
   background: #e8dfd0;
@@ -3860,5 +3366,5 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .reviewBtn { background: #fff3e0; border: 1px solid #ffcc80; color: #b36b00; }
 .reviewBtn:hover { background: #ffe0b2; border-color: #ffb74d; }
 
-@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .linkRow { flex-direction: column; } .copyBtn, .previewBtn { width: 100%; justify-content: center; } .oplog-panel { width: 100vw; } .formRow, .reviewForm .formRow { grid-template-columns: 1fr; } .bookGrid { grid-template-columns: 1fr; } .seriesActionButtons { flex-direction: column; } .seriesActionButtons button { width: 100%; justify-content: center; } }
+@media (max-width: 900px) { main { padding: 16px; } .hero, .eventHead, .seriesBanner { align-items: start; flex-direction: column; } .metrics { grid-template-columns: repeat(3, 1fr); } .layout, .adminGrid, .bookLibrary { grid-template-columns: 1fr; } .signupRow, .bookCard { flex-direction: column; } .importStats { grid-template-columns: repeat(2, 1fr); } .eventHead-actions { flex-wrap: wrap; } .oplog-panel { width: 100vw; } .formRow, .reviewForm .formRow { grid-template-columns: 1fr; } .bookGrid { grid-template-columns: 1fr; } .seriesActionButtons { flex-direction: column; } .seriesActionButtons button { width: 100%; justify-content: center; } }
 </style>
