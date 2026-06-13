@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Layers, UserCheck } from 'lucide-svelte';
   import {
     readAllStore,
@@ -17,6 +17,7 @@
   } from '$lib/utils/storeUtils.js';
   import { readReaders, writeReaders, findReaderByPhone } from '$lib/utils/readerStore.js';
   import { hasMigratedReaders, markMigrationDone, runFullMigration } from '$lib/utils/readerMigration.js';
+  import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
 
   export let eventId;
 
@@ -34,6 +35,12 @@
   let lastSignupStatus = '';
   let lastSignupWaitlistPosition = 0;
 
+  let _syncVersions = {};
+  let _suppressSave = false;
+  let _conflictBanner = null;
+  let _pendingChangedKeys = [];
+  let _unsubscribeSync = null;
+
   $: event = getEventById(events, eventId);
   $: eventSeries = event ? getSeriesOfEvent(events, series, eventId) : null;
   $: seriesEvents = eventSeries ? getSeriesEvents(events, eventSeries.id) : [];
@@ -44,10 +51,11 @@
   $: hasMySignup = mySignups.length > 0;
   $: myLatestSignup = mySignups.length > 0 ? mySignups[0] : null;
 
-  $: if (hydrated) {
+  $: if (hydrated && !_suppressSave) {
     writeSignups(signups);
     writeMySignupIds(mySignupIds);
     writeReaders(readers);
+    _syncVersions = getCurrentVersions();
   }
 
   $: if (signupForm.phone && signupForm.phone.trim()) {
@@ -78,12 +86,62 @@
       readers = result.readers;
       signups = result.signups;
       writeReaders(readers);
-      localStorage.setItem('zfl-6-signups', JSON.stringify(signups));
+      writeSignups(signups);
       markMigrationDone();
     }
 
     hydrated = true;
+    _syncVersions = getCurrentVersions();
+
+    _unsubscribeSync = onExternalChange(() => {
+      if (_suppressSave) return;
+      const changedKeys = getChangedKeys(_syncVersions);
+      if (changedKeys.length === 0) return;
+
+      const isDirty = signupForm.name?.trim() || signupForm.phone?.trim() || signupForm.answer?.trim();
+
+      if (isDirty) {
+        _pendingChangedKeys = [...new Set([..._pendingChangedKeys, ...changedKeys])];
+        _conflictBanner = getChangedLabels(_pendingChangedKeys);
+      } else {
+        applyExternalReload(changedKeys);
+      }
+    });
+
+    return () => {
+      if (_unsubscribeSync) _unsubscribeSync();
+      destroyChannel();
+    };
   });
+
+  function applyExternalReload(changedKeys) {
+    _suppressSave = true;
+    const store = readAllStore();
+    const newReaders = readReaders();
+    for (const key of changedKeys) {
+      if (key === 'zfl-6-events') events = store.events;
+      else if (key === 'zfl-6-signups') signups = store.signups;
+      else if (key === 'zfl-6-my-signup-ids') mySignupIds = store.mySignupIds;
+      else if (key === 'zfl-6-series') series = store.series;
+      else if (key === 'zfl-6-readers') readers = newReaders;
+      else if (key === 'zfl-6-books') books = store.books;
+    }
+    _syncVersions = getCurrentVersions();
+    tick().then(() => { _suppressSave = false; });
+  }
+
+  function handleConflictRefresh() {
+    const changedKeys = [..._pendingChangedKeys];
+    _conflictBanner = null;
+    _pendingChangedKeys = [];
+    applyExternalReload(changedKeys);
+  }
+
+  function handleConflictDismiss() {
+    _syncVersions = getCurrentVersions();
+    _conflictBanner = null;
+    _pendingChangedKeys = [];
+  }
 
   function handleSignup() {
     if (!event || event.status !== '开放报名' || !signupForm.name.trim()) return;
@@ -122,6 +180,16 @@
 </script>
 
 <div class="publicPage">
+  {#if _conflictBanner}
+    <div class="sync-conflict-banner">
+      <span class="sync-conflict-text">⚠️ 后台数据已更新：{_conflictBanner}</span>
+      <div class="sync-conflict-actions">
+        <button class="sync-refresh-btn" on:click={handleConflictRefresh}>刷新数据</button>
+        <button class="sync-dismiss-btn" on:click={handleConflictDismiss}>继续填写</button>
+      </div>
+    </div>
+  {/if}
+
   {#if !event}
     <div class="notFound">
       <h2>活动不存在</h2>
@@ -585,5 +653,40 @@
     .publicPage { padding: 16px; }
     .eventHead, .seriesBanner { flex-direction: column; align-items: start; }
     .seatsInfo { align-items: start; }
+  }
+
+  .sync-conflict-banner {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    color: #856404;
+    padding: 12px 18px;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 14px;
+    font-weight: 500;
+    flex-wrap: wrap;
+  }
+  .sync-conflict-text { flex-shrink: 1; min-width: 0; }
+  .sync-conflict-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .sync-refresh-btn {
+    background: #856404;
+    color: #fff;
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 6px;
+    border: 0;
+    cursor: pointer;
+  }
+  .sync-dismiss-btn {
+    background: transparent;
+    border: 1px solid #856404;
+    color: #856404;
+    padding: 6px 14px;
+    font-size: 13px;
+    border-radius: 6px;
+    cursor: pointer;
   }
 </style>

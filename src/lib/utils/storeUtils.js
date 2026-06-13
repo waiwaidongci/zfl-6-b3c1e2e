@@ -1,4 +1,5 @@
 import { linkSignupToReader } from './readerMigration.js';
+import { versionedWrite } from './syncStore.js';
 
 const KEYS = {
   books: 'zfl-6-books',
@@ -9,6 +10,8 @@ const KEYS = {
   readers: 'zfl-6-readers',
   opsViews: 'zfl-6-ops-views'
 };
+
+export { KEYS };
 
 function safeParse(str, fallback) {
   try {
@@ -31,7 +34,7 @@ export function readBooks() {
 }
 
 export function writeBooks(books) {
-  localStorage.setItem(KEYS.books, safeStringify(books));
+  versionedWrite(KEYS.books, safeStringify(books));
 }
 
 export function readEvents() {
@@ -45,7 +48,7 @@ export function readEvents() {
 }
 
 export function writeEvents(events) {
-  localStorage.setItem(KEYS.events, safeStringify(events));
+  versionedWrite(KEYS.events, safeStringify(events));
 }
 
 export function readSignups() {
@@ -66,7 +69,7 @@ export function readSignups() {
 }
 
 export function writeSignups(signups) {
-  localStorage.setItem(KEYS.signups, safeStringify(signups));
+  versionedWrite(KEYS.signups, safeStringify(signups));
 }
 
 export function readMySignupIds() {
@@ -74,7 +77,7 @@ export function readMySignupIds() {
 }
 
 export function writeMySignupIds(ids) {
-  localStorage.setItem(KEYS.mySignupIds, safeStringify(ids));
+  versionedWrite(KEYS.mySignupIds, safeStringify(ids));
 }
 
 export function readSeries() {
@@ -82,7 +85,7 @@ export function readSeries() {
 }
 
 export function writeSeries(series) {
-  localStorage.setItem(KEYS.series, safeStringify(series));
+  versionedWrite(KEYS.series, safeStringify(series));
 }
 
 export function readViews() {
@@ -90,7 +93,7 @@ export function readViews() {
 }
 
 export function writeViews(views) {
-  localStorage.setItem(KEYS.opsViews, safeStringify(views));
+  versionedWrite(KEYS.opsViews, safeStringify(views));
 }
 
 export function createView(viewData) {

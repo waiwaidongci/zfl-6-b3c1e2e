@@ -1,4 +1,4 @@
-import { readBooks, writeBooks, readEvents, writeEvents, readSignups, writeSignups, readMySignupIds, writeMySignupIds, readSeries, writeSeries } from './storeUtils.js';
+import { readBooks, writeBooks, readEvents, writeEvents, readSignups, writeSignups, readMySignupIds, writeMySignupIds, readSeries, writeSeries, KEYS } from './storeUtils.js';
 import { readReaders, writeReaders } from './readerStore.js';
 import { hasMigratedReaders, markMigrationDone, runFullMigration } from './readerMigration.js';
 
@@ -35,6 +35,31 @@ export function saveAllData(data) {
   if (data.mySignupIds !== undefined) writeMySignupIds(data.mySignupIds);
   if (data.series !== undefined) writeSeries(data.series);
   if (data.readers !== undefined) writeReaders(data.readers);
+}
+
+const KEY_TO_FIELD = {};
+KEY_TO_FIELD[KEYS.books] = 'books';
+KEY_TO_FIELD[KEYS.events] = 'events';
+KEY_TO_FIELD[KEYS.signups] = 'signups';
+KEY_TO_FIELD[KEYS.mySignupIds] = 'mySignupIds';
+KEY_TO_FIELD[KEYS.series] = 'series';
+KEY_TO_FIELD[KEYS.readers] = 'readers';
+
+export function reloadChangedData(changedKeys, currentData) {
+  const updated = {};
+  for (const key of changedKeys) {
+    const field = KEY_TO_FIELD[key];
+    if (!field) continue;
+    switch (field) {
+      case 'books': updated.books = readBooks(); break;
+      case 'events': updated.events = readEvents(); break;
+      case 'signups': updated.signups = readSignups(); break;
+      case 'mySignupIds': updated.mySignupIds = readMySignupIds(); break;
+      case 'series': updated.series = readSeries(); break;
+      case 'readers': updated.readers = readReaders(); break;
+    }
+  }
+  return { ...currentData, ...updated };
 }
 
 export function normalizeEvent(event) {

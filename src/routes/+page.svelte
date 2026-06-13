@@ -21,7 +21,7 @@
     copyToClipboard,
     getSeriesPublicEventLinks
   } from '$lib/utils/eventLinkUtils.js';
-  import { loadAllData, saveAllData } from '$lib/utils/dataStore.js';
+  import { loadAllData, saveAllData, reloadChangedData } from '$lib/utils/dataStore.js';
   import {
     findReaderByPhone,
     updateReader,
@@ -63,6 +63,7 @@
     buildAfterStateSnapshot,
     generateDescription
   } from '$lib/utils/operationLog.js';
+  import { onExternalChange, getCurrentVersions, getChangedKeys, getChangedLabels, destroyChannel } from '$lib/utils/syncStore.js';
 
   const seedBooks = [
     { id: crypto.randomUUID(), title: '秋园', author: '杨本芬', description: '《秋园》是作家杨本芬的处女作，讲述了一位普通女性在时代洪流中艰难生存的故事。', question: '你最想讨论哪一章？' },
@@ -141,6 +142,12 @@
   let undoCountInput = 1;
   let lastUndoMessage = '';
 
+  let _syncVersions = {};
+  let _suppressSave = false;
+  let _conflictBanner = null;
+  let _pendingChangedKeys = [];
+  let _unsubscribeSync = null;
+
   function scrollToSignupGroup(targetType) {
     if (!signupListContainer) return;
     const selectors = {
@@ -179,10 +186,64 @@
 
     selectedId = events[0]?.id || '';
     hydrated = true;
+    _syncVersions = getCurrentVersions();
+
+    _unsubscribeSync = onExternalChange(() => {
+      if (_suppressSave) return;
+      const changedKeys = getChangedKeys(_syncVersions);
+      if (changedKeys.length === 0) return;
+
+      const isDirty = !!(
+        editingEventId || editingBookId || editingSeriesId ||
+        addingEventToSeriesId || rejectingSignupId ||
+        importCsvText.trim() ||
+        signupForm.name?.trim() || signupForm.phone?.trim() || signupForm.answer?.trim()
+      );
+
+      if (isDirty) {
+        _pendingChangedKeys = [...new Set([..._pendingChangedKeys, ...changedKeys])];
+        _conflictBanner = getChangedLabels(_pendingChangedKeys);
+      } else {
+        applyExternalReload(changedKeys);
+      }
+    });
+
+    return () => {
+      if (_unsubscribeSync) _unsubscribeSync();
+      destroyChannel();
+    };
   });
 
-  $: if (hydrated) {
+  $: if (hydrated && !_suppressSave) {
     saveAllData({ books, events, signups, mySignupIds, series, readers });
+    _syncVersions = getCurrentVersions();
+  }
+
+  function applyExternalReload(changedKeys) {
+    _suppressSave = true;
+    const currentData = { books, events, signups, mySignupIds, series, readers };
+    const reloaded = reloadChangedData(changedKeys, currentData);
+    books = reloaded.books;
+    events = reloaded.events;
+    signups = reloaded.signups;
+    mySignupIds = reloaded.mySignupIds;
+    series = reloaded.series;
+    readers = reloaded.readers;
+    _syncVersions = getCurrentVersions();
+    tick().then(() => { _suppressSave = false; });
+  }
+
+  function handleConflictRefresh() {
+    const changedKeys = [..._pendingChangedKeys];
+    _conflictBanner = null;
+    _pendingChangedKeys = [];
+    applyExternalReload(changedKeys);
+  }
+
+  function handleConflictDismiss() {
+    _syncVersions = getCurrentVersions();
+    _conflictBanner = null;
+    _pendingChangedKeys = [];
   }
 
   $: if (signupForm.phone && signupForm.phone.trim()) {
@@ -929,6 +990,16 @@
     <div class="undo-toast">
       <CheckCircle2 size={16} />
       <span>{lastUndoMessage}</span>
+    </div>
+  {/if}
+
+  {#if _conflictBanner}
+    <div class="sync-conflict-banner">
+      <span class="sync-conflict-text">⚠️ 其他标签页已更新：{_conflictBanner}</span>
+      <div class="sync-conflict-actions">
+        <button class="sync-refresh-btn" on:click={handleConflictRefresh}>刷新数据</button>
+        <button class="sync-dismiss-btn" on:click={handleConflictDismiss}>继续编辑</button>
+      </div>
     </div>
   {/if}
 
@@ -2657,6 +2728,52 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 @keyframes toastIn {
   from { opacity: 0; transform: translate(-50%, -20px); }
   to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.sync-conflict-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99998;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #856404;
+  padding: 12px 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(255, 193, 7, 0.35);
+  animation: toastIn 0.3s ease;
+  max-width: 90vw;
+  flex-wrap: wrap;
+}
+.sync-conflict-text {
+  flex-shrink: 1;
+  min-width: 0;
+}
+.sync-conflict-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.sync-refresh-btn {
+  background: #856404;
+  color: #fff;
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.sync-dismiss-btn {
+  background: transparent;
+  border: 1px solid #856404;
+  color: #856404;
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 6px;
 }
 
 .oplog-overlay {

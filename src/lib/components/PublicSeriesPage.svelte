@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Layers, UserCheck, Users, Calendar } from 'lucide-svelte';
   import {
     readAllStore,
@@ -12,6 +12,7 @@
     getSeriesStatsSummary
   } from '$lib/utils/storeUtils.js';
   import { buildPublicEventUrl } from '$lib/utils/eventLinkUtils.js';
+  import { onExternalChange, getCurrentVersions, getChangedKeys, destroyChannel } from '$lib/utils/syncStore.js';
 
   export let seriesId;
 
@@ -21,6 +22,9 @@
   let mySignupIds = [];
   let series = [];
   let hydrated = false;
+
+  let _syncVersions = {};
+  let _unsubscribeSync = null;
 
   $: currentSeries = hydrated ? getSeriesById(series, seriesId) : null;
   $: isValid = hydrated ? isValidSeriesId(series, seriesId) : false;
@@ -35,6 +39,24 @@
     mySignupIds = store.mySignupIds;
     series = store.series;
     hydrated = true;
+    _syncVersions = getCurrentVersions();
+
+    _unsubscribeSync = onExternalChange(() => {
+      const changedKeys = getChangedKeys(_syncVersions);
+      if (changedKeys.length === 0) return;
+      const store = readAllStore();
+      events = store.events;
+      signups = store.signups;
+      mySignupIds = store.mySignupIds;
+      series = store.series;
+      books = store.books;
+      _syncVersions = getCurrentVersions();
+    });
+
+    return () => {
+      if (_unsubscribeSync) _unsubscribeSync();
+      destroyChannel();
+    };
   });
 
   function formatTime(timeStr) {

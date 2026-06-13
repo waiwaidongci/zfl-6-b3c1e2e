@@ -1,4 +1,5 @@
 const READERS_KEY = 'zfl-6-readers';
+import { versionedWrite } from './syncStore.js';
 
 function safeParse(str, fallback) {
   try {
@@ -44,7 +45,7 @@ export function readReaders() {
 }
 
 export function writeReaders(readers) {
-  localStorage.setItem(READERS_KEY, safeStringify(readers));
+  versionedWrite(READERS_KEY, safeStringify(readers));
 }
 
 export function normalizeReader(reader) {
