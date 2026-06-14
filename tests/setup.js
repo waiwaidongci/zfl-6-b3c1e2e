@@ -25,86 +25,98 @@ if (typeof globalThis.localStorage === 'undefined') {
   };
 }
 
-if (typeof globalThis.crypto === 'undefined') {
-  let uuidCounter = 0;
-  globalThis.crypto = {
-    randomUUID: () => {
-      uuidCounter++;
-      return 'test-uuid-' + uuidCounter.toString().padStart(8, '0');
-    },
-    getRandomValues: (arr) => {
-      for (let i = 0; i < arr.length; i++) {
-        arr[i] = Math.floor(Math.random() * 256);
-      }
-      return arr;
-    }
-  };
+let _uuidSeq = 0;
+let _randomSeq = 0;
+
+function deterministicUUID() {
+  _uuidSeq++;
+  const hex = _uuidSeq.toString(16).padStart(12, '0');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${'0'.repeat(3)}-${'a000'.slice(0, 4)}-${'0'.repeat(12)}`;
 }
 
-if (typeof globalThis.BroadcastChannel === 'undefined') {
-  const channels = new Map();
-
-  globalThis.BroadcastChannel = class BroadcastChannel {
-    constructor(name) {
-      this.name = name;
-      this._listeners = [];
-      this._closed = false;
-      if (!channels.has(name)) {
-        channels.set(name, new Set());
-      }
-      channels.get(name).add(this);
-    }
-
-    postMessage(data) {
-      if (this._closed) return;
-      const allChannels = channels.get(this.name);
-      if (!allChannels) return;
-      for (const ch of allChannels) {
-        if (ch !== this && !ch._closed) {
-          for (const listener of ch._listeners) {
-            try {
-              listener({ data, source: this });
-            } catch (e) {}
-          }
-          if (ch.onmessage) {
-            try {
-              ch.onmessage({ data, source: this });
-            } catch (e) {}
-          }
-        }
-      }
-    }
-
-    addEventListener(type, listener) {
-      if (type === 'message') {
-        this._listeners.push(listener);
-      }
-    }
-
-    removeEventListener(type, listener) {
-      if (type === 'message') {
-        const idx = this._listeners.indexOf(listener);
-        if (idx !== -1) this._listeners.splice(idx, 1);
-      }
-    }
-
-    set onmessage(fn) {
-      this._onmessage = fn;
-    }
-
-    get onmessage() {
-      return this._onmessage || null;
-    }
-
-    close() {
-      this._closed = true;
-      const allChannels = channels.get(this.name);
-      if (allChannels) {
-        allChannels.delete(this);
-      }
-    }
-  };
+function deterministicRandomValues(arr) {
+  const constructor = arr.constructor;
+  const byteLen = constructor.BYTES_PER_ELEMENT || 1;
+  for (let i = 0; i < arr.length; i++) {
+    _randomSeq++;
+    const v = (_randomSeq * 2654435761) >>> 0;
+    arr[i] = (v % (256 ** byteLen));
+  }
+  return arr;
 }
+
+const _origCrypto = globalThis.crypto;
+
+const _cryptoMock = {
+  randomUUID: deterministicUUID,
+  getRandomValues: deterministicRandomValues
+};
+
+try {
+  globalThis.crypto = _cryptoMock;
+} catch (_) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: _cryptoMock,
+    writable: true,
+    configurable: true
+  });
+}
+
+const _channelRegistry = new Map();
+
+class DeterministicBroadcastChannel {
+  constructor(name) {
+    this.name = name;
+    this._listeners = [];
+    this._closed = false;
+    this._onmessage = null;
+    if (!_channelRegistry.has(name)) {
+      _channelRegistry.set(name, new Set());
+    }
+    _channelRegistry.get(name).add(this);
+  }
+
+  postMessage(data) {
+    if (this._closed) return;
+    const members = _channelRegistry.get(this.name);
+    if (!members) return;
+    for (const ch of members) {
+      if (ch === this || ch._closed) continue;
+      const event = { data, source: this };
+      for (const fn of ch._listeners) {
+        try { fn(event); } catch (_) {}
+      }
+      if (ch._onmessage) {
+        try { ch._onmessage(event); } catch (_) {}
+      }
+    }
+  }
+
+  addEventListener(type, listener) {
+    if (type === 'message' && typeof listener === 'function') {
+      this._listeners.push(listener);
+    }
+  }
+
+  removeEventListener(type, listener) {
+    if (type === 'message') {
+      const idx = this._listeners.indexOf(listener);
+      if (idx !== -1) this._listeners.splice(idx, 1);
+    }
+  }
+
+  set onmessage(fn) { this._onmessage = typeof fn === 'function' ? fn : null; }
+  get onmessage() { return this._onmessage; }
+
+  close() {
+    this._closed = true;
+    const members = _channelRegistry.get(this.name);
+    if (members) members.delete(this);
+  }
+}
+
+const _origBroadcastChannel = globalThis.BroadcastChannel;
+globalThis.BroadcastChannel = DeterministicBroadcastChannel;
 
 if (typeof globalThis.window === 'undefined') {
   globalThis.window = globalThis;
@@ -133,4 +145,26 @@ export function resetTestEnv() {
     globalThis.localStorage.clear();
   }
   storeMap.clear();
+
+  _uuidSeq = 0;
+  _randomSeq = 0;
+
+  for (const [, members] of _channelRegistry) {
+    for (const ch of members) {
+      ch._closed = true;
+      ch._listeners.length = 0;
+      ch._onmessage = null;
+    }
+    members.clear();
+  }
+  _channelRegistry.clear();
+}
+
+export function getUUIDSequence() {
+  return _uuidSeq;
+}
+
+export function restoreGlobals() {
+  if (_origCrypto !== undefined) globalThis.crypto = _origCrypto;
+  if (_origBroadcastChannel !== undefined) globalThis.BroadcastChannel = _origBroadcastChannel;
 }
