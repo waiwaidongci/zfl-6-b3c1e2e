@@ -1,18 +1,4 @@
-if (typeof globalThis.localStorage === 'undefined') {
-  const store = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => store.get(key) || null,
-    setItem: (key, value) => store.set(key, String(value)),
-    removeItem: (key) => store.delete(key),
-    clear: () => store.clear()
-  };
-}
-
-if (typeof globalThis.crypto === 'undefined') {
-  globalThis.crypto = {
-    randomUUID: () => 'test-uuid-' + Math.random().toString(36).slice(2, 11)
-  };
-}
+import './setup.js';
 
 import {
   getEventStats,
@@ -98,6 +84,19 @@ import {
 
 let passed = 0;
 let failed = 0;
+let currentSection = '';
+const failures = [];
+
+function setSection(name) {
+  currentSection = name;
+}
+
+function recordFailure(message) {
+  failures.push({
+    section: currentSection,
+    message
+  });
+}
 
 function assert(condition, message) {
   if (condition) {
@@ -105,6 +104,7 @@ function assert(condition, message) {
     console.log(`  ✅ ${message}`);
   } else {
     failed++;
+    recordFailure(message);
     console.error(`  ❌ ${message}`);
   }
 }
@@ -115,7 +115,9 @@ function assertEqual(actual, expected, message) {
     console.log(`  ✅ ${message}`);
   } else {
     failed++;
-    console.error(`  ❌ ${message} (expected ${expected}, got ${actual})`);
+    const detail = `${message} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`;
+    recordFailure(detail);
+    console.error(`  ❌ ${detail}`);
   }
 }
 
@@ -125,7 +127,9 @@ function assertApprox(actual, expected, epsilon, message) {
     console.log(`  ✅ ${message}`);
   } else {
     failed++;
-    console.error(`  ❌ ${message} (expected ~${expected}, got ${actual})`);
+    const detail = `${message} (expected ~${expected}, got ${actual})`;
+    recordFailure(detail);
+    console.error(`  ❌ ${detail}`);
   }
 }
 
@@ -135,10 +139,33 @@ function assertIncludes(arr, item, message) {
     console.log(`  ✅ ${message}`);
   } else {
     failed++;
-    console.error(`  ❌ ${message} (array does not include ${item})`);
+    const detail = `${message} (array does not include ${JSON.stringify(item)})`;
+    recordFailure(detail);
+    console.error(`  ❌ ${detail}`);
   }
 }
 
+function printFailureSummary() {
+  if (failures.length === 0) return;
+  console.error('\n' + '='.repeat(60));
+  console.error('失败详情汇总');
+  console.error('='.repeat(60));
+  const bySection = {};
+  for (const f of failures) {
+    const sec = f.section || '未分类';
+    if (!bySection[sec]) bySection[sec] = [];
+    bySection[sec].push(f.message);
+  }
+  for (const [section, msgs] of Object.entries(bySection)) {
+    console.error(`\n📁 [${section}]`);
+    msgs.forEach((m, i) => {
+      console.error(`   ${i + 1}. ${m}`);
+    });
+  }
+  console.error('\n' + '='.repeat(60));
+}
+
+setSection('运营统计 - opsStats.js');
 console.log('\n=== 运营统计计算测试 ===\n');
 
 const mockEvents = [
@@ -346,6 +373,7 @@ assertEqual(dashboardEmpty.anomalies.length, 0, 'empty dashboard: no anomalies')
 assertEqual(dashboardEmpty.groupsSummary.total, 0, 'empty dashboard: groupsSummary.total = 0');
 assertEqual(dashboardEmpty.groupsSummary.regular, 0, 'empty dashboard: groupsSummary.regular = 0');
 
+setSection('存储工具 - storeUtils.js');
 console.log('\n=== 事件操作函数测试 (storeUtils) ===\n');
 
 console.log('--- getEventById ---');
@@ -426,6 +454,7 @@ afterCancel = afterCancel.map((s) => s.id === 'ps_new' ? { ...s, status: '候补
 const cancelResult = handleSignupCancel(promoEvents, afterCancel, [], afterCancel.find((s) => s.name === 'Cancel')?.id || afterCancel[1].id);
 assert(cancelResult.signups.length <= afterCancel.length, 'cancel reduces signup count');
 
+setSection('事件操作 - eventActions.js');
 console.log('\n=== 事件操作函数测试 (eventActions) ===\n');
 
 console.log('--- toggleEventStatus ---');
@@ -495,6 +524,7 @@ assert(submitResult.mySignupIds.length > 0, 'mySignupIds updated');
 const submitClosed = handleSignupSubmit([closedEvent], [], [], [], 'ce1', { name: 'X', phone: '1' });
 assert(!submitClosed.success, 'handleSignupSubmit fails for closed event');
 
+setSection('数据兼容 - dataStore.js');
 console.log('\n=== 旧数据兼容性测试 ===\n');
 
 console.log('--- normalizeEvent ---');
@@ -549,6 +579,7 @@ const vlStats = getEventStats([vlNormEvent], [vlNormSignup], []);
 assertEqual(vlStats[0].totalSignups, 1, 'can compute stats from very legacy data');
 assertEqual(vlStats[0].regularCount, 1, 'legacy signup counted as regular');
 
+setSection('CSV工具 - csvTools.js');
 console.log('\n=== CSV工具测试 ===\n');
 
 console.log('--- parseCsvLine ---');
@@ -630,6 +661,7 @@ assertIncludes(anomalyTypes, 'checkin', '签到率低 anomaly has navigateTarget
 assertIncludes(anomalyTypes, 'waitlist', '满员候补 anomaly has navigateTarget.type=waitlist');
 assertIncludes(anomalyTypes, 'rejected', '转化率低 anomaly has navigateTarget.type=rejected');
 
+setSection('视图功能 - storeUtils.js');
 console.log('\n=== 常用视图功能测试 ===\n');
 
 writeViews([]);
@@ -847,6 +879,7 @@ assertEqual(e1Dashboard.groupsSummary.pending, 0, '视图筛选后待审核=0（
 writeViews([]);
 assertEqual(readViews().length, 0, '测试结束后清空视图数据');
 
+setSection('操作日志 - operationLog.js');
 console.log('\n=== 操作日志与撤销功能测试 ===\n');
 
 import {
@@ -1282,6 +1315,7 @@ assertEqual(normalized[0].undone, false, '缺undone的日志被设为false');
 
 clearOperationLogs();
 
+setSection('状态机 - signupStatusMachine.js');
 console.log('\n=== 状态机：常量和基础校验 ===\n');
 
 assertEqual(SIGNUP_STATUS.PENDING, '待审核', 'PENDING常量');
@@ -1669,6 +1703,7 @@ assertEqual(smGroups.pending, 1, 'opsStats统一：groupsSummary.pending=1');
 assertEqual(smGroups.rejected, 1, 'opsStats统一：groupsSummary.rejected=1');
 
 
+setSection('整季报名 - storeUtils.js');
 console.log('\n=== 整季报名（batchSignup）测试 ===\n');
 
 import {
@@ -1964,6 +1999,7 @@ function mockIsoFn(daysOffset = 7) {
   return d.toISOString().slice(0, 10);
 }
 
+setSection('CSV导入 - csvTools.js');
 console.log('\n=== CSV导入回归测试：字段自动识别 ===\n');
 
 console.log('--- autoDetectMapping：标准表头 ---');
@@ -2511,8 +2547,9 @@ for (const ev of newEventPreview.preview.events) {
   assertEqual(ev.limit, 20, `新活动 ${ev.book} 默认limit=20`);
 }
 
-console.log(`结果: ${passed} 通过, ${failed} 失败`);
+console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
 if (failed > 0) {
+  printFailureSummary();
   console.error('\n⚠️ 有测试失败，请检查！');
   process.exit(1);
 } else {

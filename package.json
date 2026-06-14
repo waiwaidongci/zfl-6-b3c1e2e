@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5176",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5176"
+    "preview": "vite preview --host 0.0.0.0 --port 5176",
+    "test": "node tests/verify.js",
+    "test:unit": "node tests/verify.js",
+    "test:smoke": "node tests/smoke.js",
+    "test:all": "npm run test:unit && npm run build && npm run test:smoke",
+    "quality-gate": "npm run test:all"
   },
   "dependencies": {
     "@sveltejs/adapter-auto": "^4.0.0",
