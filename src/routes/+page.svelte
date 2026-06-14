@@ -676,9 +676,10 @@
   }
 
   function deleteBook(id) {
+    const wasSelectedBook = selectedBookId === id;
     const res = handleDeleteBook({ books, id, selectedBookId });
     books = res.books;
-    if (res.selectedBookId === '') {
+    if (wasSelectedBook) {
       selectedBookId = '';
       const cleared = handleClearBookSelection({ eventForm });
       eventForm = cleared.eventForm;

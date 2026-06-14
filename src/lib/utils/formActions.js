@@ -88,8 +88,10 @@ export function handleClearBookSelection({ eventForm }) {
     selectedBookId: '',
     eventForm: {
       ...eventForm,
+      book: '',
       author: '',
-      description: ''
+      description: '',
+      question: ''
     }
   };
 }
