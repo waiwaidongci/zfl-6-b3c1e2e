@@ -385,29 +385,6 @@
     lastEventLimitsRef.current = result.lastLimits;
   }
 
-  $: if (selectedBookId) {
-    const book = books.find((b) => b.id === selectedBookId);
-    if (book) {
-      eventForm.book = book.title;
-      eventForm.author = book.author;
-      eventForm.description = book.description;
-      eventForm.question = book.question;
-    }
-  } else {
-    eventForm.author = '';
-    eventForm.description = '';
-  }
-
-  $: if (selectedSeriesBookId) {
-    const book = books.find((b) => b.id === selectedSeriesBookId);
-    if (book) {
-      seriesEventForm.book = book.title;
-      seriesEventForm.author = book.author;
-      seriesEventForm.description = book.description;
-      seriesEventForm.question = book.question;
-    }
-  }
-
   $: calData = getCalendarData(events, calYear, calMonth);
   $: todayStr = calData.todayStr;
   $: calFirstDay = calData.calFirstDay;
@@ -569,25 +546,25 @@
   }
 
   function selectSeriesBookForEvent(bookId) {
-    const res = handleSelectSeriesBookForEvent({ books, selectedSeriesBookId, bookId });
+    const res = handleSelectSeriesBookForEvent({ books, seriesEventForm, bookId });
     selectedSeriesBookId = res.selectedSeriesBookId;
     seriesEventForm = res.seriesEventForm;
   }
 
   function clearSeriesBookSelection() {
-    const res = handleClearSeriesBookSelection();
+    const res = handleClearSeriesBookSelection({ seriesEventForm });
     selectedSeriesBookId = res.selectedSeriesBookId;
     seriesEventForm = res.seriesEventForm;
   }
 
   function selectBookForEvent(bookId) {
-    const res = handleSelectBookForEvent({ books, selectedBookId, bookId });
+    const res = handleSelectBookForEvent({ books, eventForm, bookId });
     selectedBookId = res.selectedBookId;
     eventForm = res.eventForm;
   }
 
   function clearBookSelection() {
-    const res = handleClearBookSelection();
+    const res = handleClearBookSelection({ eventForm });
     selectedBookId = res.selectedBookId;
     eventForm = res.eventForm;
   }
@@ -701,9 +678,9 @@
   function deleteBook(id) {
     const res = handleDeleteBook({ books, id, selectedBookId });
     books = res.books;
-    selectedBookId = res.selectedBookId;
-    if (selectedBookId === '') {
-      const cleared = handleClearBookSelection();
+    if (res.selectedBookId === '') {
+      selectedBookId = '';
+      const cleared = handleClearBookSelection({ eventForm });
       eventForm = cleared.eventForm;
     }
   }

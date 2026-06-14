@@ -66,14 +66,13 @@ export function handleCancelEditBook() {
   };
 }
 
-export function handleSelectBookForEvent({ books, selectedBookId, bookId }) {
+export function handleSelectBookForEvent({ books, eventForm, bookId }) {
   const book = books.find((b) => b.id === bookId);
-  const initialForms = createInitialForms();
   if (book) {
     return {
       selectedBookId: bookId,
       eventForm: {
-        ...initialForms.eventForm,
+        ...eventForm,
         book: book.title,
         author: book.author,
         description: book.description,
@@ -81,29 +80,27 @@ export function handleSelectBookForEvent({ books, selectedBookId, bookId }) {
       }
     };
   }
-  return { selectedBookId: '', eventForm: initialForms.eventForm };
+  return { selectedBookId: '', eventForm };
 }
 
-export function handleClearBookSelection() {
-  const initialForms = createInitialForms();
+export function handleClearBookSelection({ eventForm }) {
   return {
     selectedBookId: '',
     eventForm: {
-      ...initialForms.eventForm,
+      ...eventForm,
       author: '',
       description: ''
     }
   };
 }
 
-export function handleSelectSeriesBookForEvent({ books, selectedSeriesBookId, bookId }) {
+export function handleSelectSeriesBookForEvent({ books, seriesEventForm, bookId }) {
   const book = books.find((b) => b.id === bookId);
-  const initialForms = createInitialForms();
   if (book) {
     return {
       selectedSeriesBookId: bookId,
       seriesEventForm: {
-        ...initialForms.seriesEventForm,
+        ...seriesEventForm,
         book: book.title,
         author: book.author,
         description: book.description,
@@ -111,15 +108,14 @@ export function handleSelectSeriesBookForEvent({ books, selectedSeriesBookId, bo
       }
     };
   }
-  return { selectedSeriesBookId: '', seriesEventForm: initialForms.seriesEventForm };
+  return { selectedSeriesBookId: '', seriesEventForm };
 }
 
-export function handleClearSeriesBookSelection() {
-  const initialForms = createInitialForms();
+export function handleClearSeriesBookSelection({ seriesEventForm }) {
   return {
     selectedSeriesBookId: '',
     seriesEventForm: {
-      ...initialForms.seriesEventForm,
+      ...seriesEventForm,
       book: '',
       author: '',
       description: '',
